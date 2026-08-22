@@ -1,0 +1,25 @@
+[package]
+name = "org-structure-designer"
+version = "1.2.0"
+description = "组织架构设计工具 - 桌面版 (Tauri)"
+authors = ["Max Hou"]
+license = "MIT"
+repository = "https://github.com/MaxHou-infinity/org-structure-designer-web"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "org_structure_designer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"

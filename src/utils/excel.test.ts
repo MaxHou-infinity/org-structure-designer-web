@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as XLSX from 'xlsx';
-import { buildDepartmentTree, exportToExcel } from './excel';
+import { buildDepartmentTree, buildOrgExcelBytes, exportToExcel } from './excel';
+import { saveFile } from './tauri';
+
+vi.mock('./tauri', () => ({
+  saveFile: vi.fn().mockResolvedValue(true),
+  isTauri: vi.fn().mockReturnValue(false),
+}));
 
 // 部分 mock xlsx：保留读取/生成能力，仅将 writeFile 替换为 spy，避免测试真实写文件
 vi.mock('xlsx', async (importOriginal) => {
@@ -161,12 +167,13 @@ describe('buildDepartmentTree', () => {
   });
 });
 
-describe('exportToExcel', () => {
+describe('buildOrgExcelBytes / exportToExcel', () => {
   beforeEach(() => {
     vi.mocked(XLSX.writeFile).mockClear();
+    vi.mocked(saveFile).mockClear();
   });
 
-  it('导出时排除虚拟员工且不抛错（验证生成数据）', async () => {
+  it('生成 Excel 字节数据（排除虚拟员工，不抛错）', async () => {
     const tree: Department[] = [{
       id: 'd1',
       name: '技术部',
@@ -178,7 +185,28 @@ describe('exportToExcel', () => {
       ],
       expanded: true,
     }];
-    await expect(exportToExcel(tree)).resolves.not.toThrow();
-    expect(XLSX.writeFile).toHaveBeenCalledOnce();
+    const bytes = await buildOrgExcelBytes(tree);
+    // xlsx 文件以 PK (zip) 魔数开头
+    expect(bytes[0]).toBe(0x50);
+    expect(bytes[1]).toBe(0x4B);
+    expect(bytes.length).toBeGreaterThan(500);
+  });
+
+  it('exportToExcel 生成字节并调用 saveFile 保存', async () => {
+    const tree: Department[] = [{
+      id: 'd1',
+      name: '技术部',
+      level: 1,
+      children: [],
+      employees: [emp({ name: '张三', employeeId: 'E001', dept1: '技术部' })],
+      expanded: true,
+    }];
+    await exportToExcel(tree);
+    expect(saveFile).toHaveBeenCalledOnce();
+    expect(saveFile).toHaveBeenCalledWith(
+      '组织架构数据.xlsx',
+      expect.any(Uint8Array),
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
   });
 });

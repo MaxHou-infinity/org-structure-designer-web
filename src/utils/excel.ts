@@ -184,7 +184,11 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
   return sortDepts(rootDepts);
 }
 
-export async function exportToExcel(departments: Department[]): Promise<void> {
+/**
+ * 生成组织架构 Excel 文件字节（含「员工信息」与「组织架构」两个工作表）。
+ * 调用方决定保存方式（浏览器下载 / Tauri 另存为）。
+ */
+export async function buildOrgExcelBytes(departments: Department[]): Promise<Uint8Array> {
   const XLSX = await loadXlsx();
   const collectAllEmployees = (depts: Department[]): Employee[] => {
     let result: Employee[] = [];
@@ -242,7 +246,14 @@ export async function exportToExcel(departments: Department[]): Promise<void> {
     XLSX.utils.book_append_sheet(workbook, orgWorksheet, '组织架构');
   }
   
-  XLSX.writeFile(workbook, '组织架构数据.xlsx');
+  const out = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+  return new Uint8Array(out as ArrayBuffer);
+}
+
+export async function exportToExcel(departments: Department[]): Promise<void> {
+  const bytes = await buildOrgExcelBytes(departments);
+  const { saveFile } = await import('./tauri');
+  await saveFile('组织架构数据.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
 export async function generateSampleEmployeeTemplate(): Promise<void> {

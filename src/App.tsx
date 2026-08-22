@@ -8,6 +8,7 @@ import {
   buildDepartmentTree, 
   exportToExcel 
 } from './utils/excel';
+import { saveFile } from './utils/tauri';
 
 // 测试数据
 const TEST_EMPLOYEES = [
@@ -339,10 +340,15 @@ export default function App() {
         useCORS: true,
       });
       
-      const link = document.createElement('a');
-      link.download = '组织架构图.png';
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      const dataUrl = canvas.toDataURL('image/png');
+      // 浏览器：base64 → ArrayBuffer；Tauri 端直接保存
+      const base64 = dataUrl.split(',')[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      await saveFile('组织架构图.png', bytes, 'image/png');
     } catch (error) {
       console.error('导出PNG失败:', error);
       alert('导出PNG失败');

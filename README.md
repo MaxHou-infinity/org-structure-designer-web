@@ -1,17 +1,29 @@
 # 组织架构设计工具 (Org Structure Designer)
 
-> **v1.1.0** — 一个现代化的组织架构设计与管理工具，支持拖拽操作、虚拟员工（兼岗）、导出 PNG/Excel。
+> **v1.2.0** — 组织架构设计与管理工具：Web 版 + Tauri 桌面版（本地安装运行，无需服务器），支持拖拽操作、虚拟员工（兼岗）、导出 PNG/Excel。
 
 ## 技术栈
 
 - **前端框架**: React 18 + TypeScript (strict)
 - **构建工具**: Vite 6
+- **桌面框架**: Tauri 2（Rust 内核，本地安装运行）
 - **样式**: Tailwind CSS
 - **拖拽**: @dnd-kit
 - **Excel 处理**: xlsx（按需加载）
 - **图片导出**: html2canvas（按需加载）
 - **图标**: Lucide React
 - **测试**: Vitest
+
+## 运行形态
+
+本工具支持两种运行方式：
+
+| 形态 | 适用场景 | 运行方式 |
+|------|---------|---------|
+| **🌐 Web 版** | 浏览器直接使用 / 部署到静态托管（如 GitHub Pages） | `npm run dev` 或部署 `dist/` |
+| **🖥️ Tauri 桌面版** | 本地安装运行，无需服务器，适合分发给同事 | `npm run tauri:build` 产出安装包 |
+
+> 选择桌面版的原因：无需服务器资源即可让用户在本地运行，安装包体积约 5-10MB（Tauri 内核，远小于 Electron）。
 
 ## 功能特性
 
@@ -75,13 +87,13 @@
 # 安装依赖
 npm install
 
-# 开发模式
+# Web 版开发模式
 npm run dev
 
-# 构建生产版本
+# 构建 Web 生产版本（dist/）
 npm run build
 
-# 预览生产版本
+# 预览 Web 生产版本
 npm run preview
 
 # 代码检查（ESLint）
@@ -91,18 +103,39 @@ npm run lint
 npm run test
 ```
 
+## Tauri 桌面版开发与构建
+
+> 前置要求：macOS 需安装 [Xcode Command Line Tools](https://developer.apple.com/xcode/) 与 [Rust](https://rustup.rs/)；Windows 需安装 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（Win11 自带）与 Rust。
+
+```bash
+# 桌面版开发（热重载，自动打开桌面窗口）
+npm run tauri:dev
+
+# 构建桌面安装包（产出 .dmg / .exe / .AppImage 等）
+npm run tauri:build
+
+# 产物位于 src-tauri/target/release/bundle/
+```
+
+桌面版与 Web 版共用同一套前端代码：运行时自动检测 Tauri 环境，导出文件走原生"另存为"对话框（浏览器环境回退为下载）。
+
 > **注意**：本仓库已配置 `.npmrc` 相关的 `allowScripts` 白名单（见 `package.json`），
 > 若使用 npm 11+ 遇到 `EALLOWSCRIPTS` 错误，请检查用户级 `~/.npmrc` 中是否存在
 > 旧的 `allow-scripts=true` 配置（npm 11 已将其改为包名白名单语义），删除该行后重启终端即可。
 
 ## 质量保障
 
-- **单元测试**: Vitest + 9 个用例，覆盖部门树构建、员工归属匹配、负责人设置、导出过滤等核心逻辑
+- **单元测试**: Vitest + 10 个用例，覆盖部门树构建、员工归属匹配、负责人设置、导出过滤等核心逻辑
 - **代码检查**: ESLint 9 (typescript-eslint + react-hooks)，`npm run lint` 零错误零警告
-- **类型安全**: TypeScript strict 模式，`tsc -b` 全量类型检查
-- **性能**: html2canvas/xlsx 动态导入，主包体积 852KB → 223KB（-74%）
+- **类型安全**: TypeScript strict 模式，`tsc -b` 全量类型检查 + Rust `cargo check`
+- **性能**: html2canvas/xlsx 动态导入，主包体积 852KB → 223KB（-74%）；Tauri 安装包仅 5-10MB
 
 ## 版本历史
+
+### v1.2.0 (2026-08-22)
+- **新增**: Tauri 2 桌面版（Rust 内核，本地安装运行，无需服务器）
+- **新增**: 导出走原生"另存为"对话框（Tauri 环境自动检测，浏览器回退下载）
+- **工程**: 新增 src-tauri（Rust 主进程 + dialog/fs 插件 + capability 权限）
 
 ### v1.1.0 (2026-08-22)
 - **修复**: 部门树父子关系丢失 bug（员工全部归到一级部门），新增 idMap 反查
@@ -138,12 +171,19 @@ npm run test
 │   │   └── Sidebar.tsx        # 侧边栏组件
 │   ├── utils/
 │   │   ├── excel.ts           # Excel 处理工具
-│   │   └── excel.test.ts      # 单元测试（Vitest）
+│   │   ├── excel.test.ts      # 单元测试（Vitest）
+│   │   └── tauri.ts           # Tauri 环境适配（保存文件对话框）
 │   ├── types/
 │   │   └── index.ts           # 类型定义
 │   ├── App.tsx                # 主应用组件
 │   ├── main.tsx               # 入口文件
 │   └── index.css              # 全局样式
+├── src-tauri/                 # Tauri 桌面端（Rust）
+│   ├── src/                   # 主进程代码（main.rs / lib.rs）
+│   ├── capabilities/          # 权限配置
+│   ├── icons/                 # 应用图标
+│   ├── Cargo.toml
+│   └── tauri.conf.json
 ├── index.html
 ├── package.json
 ├── eslint.config.js           # ESLint 9 flat config
