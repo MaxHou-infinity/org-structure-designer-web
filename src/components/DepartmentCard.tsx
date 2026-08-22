@@ -10,18 +10,15 @@ interface DepartmentCardProps {
   onUpdateLeader: (deptId: string, employee: Employee | null) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
   onCreateVirtualEmployee: (deptId: string) => void;
-  onMoveDepartment: (deptId: string, targetDeptId: string | null) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   allEmployees: Employee[];
   zoom: number;
 }
 
 function DraggableEmployee({ 
-  employee, 
-  onDragStart 
+  employee
 }: { 
-  employee: Employee; 
-  onDragStart: (emp: Employee) => void;
+  employee: Employee;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: employee.id,
@@ -39,7 +36,6 @@ function DraggableEmployee({
         isDragging ? 'opacity-50' : ''
       }`}
       style={{ backgroundColor: levelColor + '40' }}
-      onDragStart={() => onDragStart(employee)}
     >
       <User className="w-3 h-3" style={{ color: levelColor }} />
       <span className="truncate flex-1">{employee.name}</span>
@@ -53,12 +49,10 @@ function DraggableEmployee({
 
 function EmployeeList({ 
   employees, 
-  onDragStart,
   onDelete,
   canDelete
 }: { 
   employees: Employee[];
-  onDragStart: (emp: Employee) => void;
   onDelete: (empId: string) => void;
   canDelete: boolean;
 }) {
@@ -84,7 +78,7 @@ function EmployeeList({
           key={emp.id}
           onContextMenu={(e) => handleContextMenu(e, emp.id)}
         >
-          <DraggableEmployee employee={emp} onDragStart={onDragStart} />
+          <DraggableEmployee employee={emp} />
           {contextMenu?.empId === emp.id && (
             <div
               className="fixed bg-white border border-gray-200 rounded shadow-lg py-1 z-50"
@@ -114,7 +108,6 @@ export function DepartmentCard({
   onUpdateLeader,
   onDeleteEmployee,
   onCreateVirtualEmployee,
-  onMoveDepartment: _onMoveDepartment,
   onChangeDepartmentLevel,
   allEmployees,
   zoom,
@@ -322,7 +315,6 @@ export function DepartmentCard({
           {department.employees.length > 0 ? (
             <EmployeeList
               employees={department.employees}
-              onDragStart={() => {}}
               onDelete={(empId) => onDeleteEmployee(department.id, empId)}
               canDelete={true}
             />

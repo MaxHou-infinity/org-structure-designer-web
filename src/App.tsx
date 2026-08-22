@@ -36,18 +36,26 @@ const TEST_ORG: OrgTemplate[] = [
   { dept1: '人力资源部', dept2: '招聘组', dept3: '', dept4: '', dept5: '', dept6: '', deptLevel: '1', leaderId: 'E010', leaderName: '陈十二' },
 ];
 
+// 查找部门辅助函数（模块级纯函数，不依赖组件状态）
+function findDept(depts: Department[], id: string): Department | null {
+  for (const dept of depts) {
+    if (dept.id === id) return dept;
+    const found = findDept(dept.children, id);
+    if (found) return found;
+  }
+  return null;
+}
+
 export default function App() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [zoom, setZoom] = useState(100);
   const [allEmployeesFlat, setAllEmployeesFlat] = useState<Employee[]>([]);
-  const [, setEmployees] = useState<Employee[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
   
   const handleEmployeeFileUpload = useCallback(async (file: File) => {
     try {
       const parsedEmployees = await parseEmployeeExcel(file);
       setAllEmployeesFlat(parsedEmployees);
-      setEmployees(parsedEmployees);
       
       // 重新构建部门树
       const newDepartments = buildDepartmentTree(parsedEmployees, []);
@@ -350,15 +358,6 @@ export default function App() {
   }, [allEmployeesFlat, departments]);
   
   // 查找部门辅助函数
-  const findDept = (depts: Department[], id: string): Department | null => {
-    for (const dept of depts) {
-      if (dept.id === id) return dept;
-      const found = findDept(dept.children, id);
-      if (found) return found;
-    }
-    return null;
-  };
-  
   const handleZoomIn = useCallback(() => {
     setZoom(prev => Math.min(prev + 10, 150));
   }, []);
@@ -429,7 +428,7 @@ export default function App() {
         return depts;
       };
       
-      let newDepts = findAndRemove(prev);
+      const newDepts = findAndRemove(prev);
       
       if (!targetDept) return prev;
       

@@ -97,7 +97,6 @@ const renderTreeRecursive = (
   onUpdateLeader: (deptId: string, employee: Employee | null) => void,
   onDeleteEmployee: (deptId: string, empId: string) => void,
   onCreateVirtualEmployee: (deptId: string) => void,
-  onMoveDepartment: (deptId: string, targetDeptId: string | null) => void,
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void,
   allEmployees: Employee[],
   zoom: number,
@@ -116,7 +115,6 @@ const renderTreeRecursive = (
             onUpdateLeader={onUpdateLeader}
             onDeleteEmployee={onDeleteEmployee}
             onCreateVirtualEmployee={onCreateVirtualEmployee}
-            onMoveDepartment={onMoveDepartment}
             onChangeDepartmentLevel={onChangeDepartmentLevel}
             allEmployees={allEmployees}
             zoom={zoom}
@@ -130,7 +128,6 @@ const renderTreeRecursive = (
                 onUpdateLeader,
                 onDeleteEmployee,
                 onCreateVirtualEmployee,
-                onMoveDepartment,
                 onChangeDepartmentLevel,
                 allEmployees,
                 zoom,
@@ -291,7 +288,6 @@ export function OrgChart({
               onUpdateLeader,
               onDeleteEmployee,
               onCreateVirtualEmployee,
-              onMoveDepartment,
               onChangeDepartmentLevel,
               allEmployees,
               zoom
