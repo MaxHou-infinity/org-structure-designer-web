@@ -1,6 +1,6 @@
 # 组织架构设计工具 (Org Structure Designer)
 
-> **v1.2.0** — 组织架构设计与管理工具：Web 版 + Tauri 桌面版（本地安装运行，无需服务器），支持拖拽操作、虚拟员工（兼岗）、导出 PNG/Excel。
+> **v2.0.0** — 组织架构设计与管理工具：Web 版 + Tauri 桌面版（本地安装运行，无需服务器），支持拖拽操作、虚拟员工（兼岗）、导出 PNG/Excel。支持 GitHub Actions 自动构建多平台安装包。
 
 ## 技术栈
 
@@ -132,6 +132,11 @@ npm run tauri:build
 
 ## 版本历史
 
+### v2.0.0 (2026-08-22)
+- **新增**: GitHub Actions 自动构建多平台安装包（macOS / Windows / Linux），打 tag 自动发布到 GitHub Release
+- **新增**: 许可证更换为 Apache-2.0（保留署名与版权声明）
+- **工程**: 版本号 1.2.0 → 2.0.0
+
 ### v1.2.0 (2026-08-22)
 - **新增**: Tauri 2 桌面版（Rust 内核，本地安装运行，无需服务器）
 - **新增**: 导出走原生"另存为"对话框（Tauri 环境自动检测，浏览器回退下载）
@@ -195,4 +200,10 @@ npm run tauri:build
 
 ## 许可证
 
-MIT License
+**Apache License 2.0** © 2026 [Max Hou (MaxHou-infinity)](https://github.com/MaxHou-infinity)
+
+本项目采用 Apache License 2.0。使用、修改或分发本项目（含衍生作品）时，**必须保留原作者版权声明与署名，并在修改文件上注明变更**（详见 [LICENSE](LICENSE)）。
+
+- 允许：商用、修改、分发、专利授权
+- 要求：保留版权声明、注明修改、附上许可证副本
+- 禁止：使用作者名义进行背书或推广

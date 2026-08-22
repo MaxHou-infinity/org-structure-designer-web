@@ -1,0 +1,70 @@
+name: 构建多平台安装包
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS 三架构（Intel / Apple Silicon）
+          - platform: macos-13
+            args: '--target x86_64-apple-darwin'
+          - platform: macos-14
+            args: '--target aarch64-apple-darwin'
+          # Windows
+          - platform: windows-latest
+            args: ''
+          # Linux
+          - platform: ubuntu-22.04
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
+
+      - name: 安装 Linux 系统依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 前端检查（lint + 测试）
+        run: |
+          npm run lint
+          npm run test
+
+      - name: 构建并发布安装包
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: '组织架构设计工具 ${{ github.ref_name }}'
+          releaseBody: '自动构建的多平台安装包（由 GitHub Actions 生成）'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

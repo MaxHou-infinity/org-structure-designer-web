@@ -1,7 +1,7 @@
 {
   "name": "org-structure-designer-web",
   "private": true,
-  "version": "1.2.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -49,5 +49,11 @@
     "esbuild@0.25.12": true,
     "fsevents@2.3.3": true,
     "vitest@4.1.11": true
+  },
+  "license": "Apache-2.0",
+  "author": "Max Hou (MaxHou-infinity)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MaxHou-infinity/org-structure-designer-web.git"
   }
 }

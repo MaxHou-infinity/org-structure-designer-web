@@ -1,9 +1,9 @@
 [package]
 name = "org-structure-designer"
-version = "1.2.0"
+version = "2.0.0"
 description = "组织架构设计工具 - 桌面版 (Tauri)"
 authors = ["Max Hou"]
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/MaxHou-infinity/org-structure-designer-web"
 edition = "2021"
 rust-version = "1.77.2"
