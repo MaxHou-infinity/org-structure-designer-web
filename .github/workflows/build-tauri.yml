@@ -15,9 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS 三架构（Intel / Apple Silicon）
-          - platform: macos-13
-            args: '--target x86_64-apple-darwin'
+          # macOS (Apple Silicon；Intel runner 已被 GitHub 退役)
           - platform: macos-14
             args: '--target aarch64-apple-darwin'
           # Windows
@@ -41,7 +39,7 @@ jobs:
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
 
       - name: 安装 Linux 系统依赖
         if: matrix.platform == 'ubuntu-22.04'
