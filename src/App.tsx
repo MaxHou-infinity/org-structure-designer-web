@@ -350,12 +350,12 @@ export default function App() {
   
   const handleExportExcel = useCallback(() => {
     try {
-      exportToExcel(allEmployeesFlat, departments);
+      exportToExcel(departments);
     } catch (error) {
       console.error('导出Excel失败:', error);
       alert('导出Excel失败');
     }
-  }, [allEmployeesFlat, departments]);
+  }, [departments]);
   
   // 查找部门辅助函数
   const handleZoomIn = useCallback(() => {

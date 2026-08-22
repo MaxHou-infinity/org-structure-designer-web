@@ -1,7 +1,8 @@
 import * as XLSX from 'xlsx';
 import { Employee, Department, OrgTemplate } from '../types';
 
-export function parseEmployeeExcel(file: File): Promise<Employee[]> {
+/** 读取 Excel 文件第一个工作表并转为 JSON 行 */
+function readFirstSheet(file: File): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -9,22 +10,7 @@ export function parseEmployeeExcel(file: File): Promise<Employee[]> {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
-        
-        const employees: Employee[] = json.map((row, index) => ({
-          id: `emp-${index}-${Date.now()}`,
-          name: String(row['姓名'] || ''),
-          employeeId: String(row['工号'] || ''),
-          level: String(row['职级'] || ''),
-          dept1: String(row['一级部门'] || ''),
-          dept2: String(row['二级部门'] || ''),
-          dept3: String(row['三级部门'] || ''),
-          dept4: String(row['四级部门'] || ''),
-          dept5: String(row['五级部门'] || ''),
-          dept6: String(row['六级部门'] || ''),
-        }));
-        
-        resolve(employees);
+        resolve(XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet));
       } catch (error) {
         reject(error);
       }
@@ -34,36 +20,43 @@ export function parseEmployeeExcel(file: File): Promise<Employee[]> {
   });
 }
 
+/** 将单元格值安全转换为字符串，过滤空值/'undefined' */
+function cellString(value: unknown): string {
+  const str = String(value ?? '');
+  return str === 'undefined' ? '' : str;
+}
+
+export function parseEmployeeExcel(file: File): Promise<Employee[]> {
+  return readFirstSheet(file).then((json) =>
+    json.map((row, index) => ({
+      id: `emp-${index}-${Date.now()}`,
+      name: cellString(row['姓名']),
+      employeeId: cellString(row['工号']),
+      level: cellString(row['职级']),
+      dept1: cellString(row['一级部门']),
+      dept2: cellString(row['二级部门']),
+      dept3: cellString(row['三级部门']),
+      dept4: cellString(row['四级部门']),
+      dept5: cellString(row['五级部门']),
+      dept6: cellString(row['六级部门']),
+    })),
+  );
+}
+
 export function parseOrgTemplateExcel(file: File): Promise<OrgTemplate[]> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
-        
-        const templates: OrgTemplate[] = json.map((row) => ({
-          dept1: String(row['一级部门'] || ''),
-          dept2: String(row['二级部门'] || ''),
-          dept3: String(row['三级部门'] || ''),
-          dept4: String(row['四级部门'] || ''),
-          dept5: String(row['五级部门'] || ''),
-          dept6: String(row['六级部门'] || ''),
-          deptLevel: String(row['部门级别'] || ''),
-          leaderId: String(row['部门负责人工号'] || ''),
-          leaderName: String(row['部门负责人'] || ''),
-        }));
-        
-        resolve(templates);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    reader.onerror = reject;
-    reader.readAsArrayBuffer(file);
-  });
+  return readFirstSheet(file).then((json) =>
+    json.map((row) => ({
+      dept1: cellString(row['一级部门']),
+      dept2: cellString(row['二级部门']),
+      dept3: cellString(row['三级部门']),
+      dept4: cellString(row['四级部门']),
+      dept5: cellString(row['五级部门']),
+      dept6: cellString(row['六级部门']),
+      deptLevel: cellString(row['部门级别']),
+      leaderId: cellString(row['部门负责人工号']),
+      leaderName: cellString(row['部门负责人']),
+    })),
+  );
 }
 
 export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemplate[]): Department[] {
@@ -147,54 +140,30 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
     }
   });
   
-  // 将员工分配到对应部门 - 使用完整路径匹配
+  // 将员工分配到对应部门 - 沿树路径逐级精确匹配（替代原 O(n²) 字符串 includes 匹配）
   employees.forEach(emp => {
-    const deptNames = [emp.dept1, emp.dept2, emp.dept3, emp.dept4, emp.dept5, emp.dept6].filter(Boolean);
-    if (deptNames.length > 0) {
-      // 尝试找到最匹配的部门（从最深层级开始查找）
-      let matchedDept: Department | undefined;
-      
-      // 从最深层级开始尝试匹配
-      for (let i = deptNames.length; i >= 1; i--) {
-        // 遍历所有部门查找匹配
-        for (const [key, dept] of deptMap) {
-          // 检查从第1级到第i级是否完全匹配
-          let fullMatch = true;
-          let currentLevel = 1;
-          
-          for (const name of deptNames.slice(0, i)) {
-            const checkKey = `${currentLevel}-${name}`;
-            if (!key.includes(checkKey)) {
-              fullMatch = false;
-              break;
-            }
-            currentLevel++;
-          }
-          
-          if (fullMatch && dept.level === i) {
-            matchedDept = dept;
-            break;
-          }
-        }
-        
-        if (matchedDept) break;
-      }
-      
-      // 如果没有找到匹配，尝试简单匹配（只按最后一级）
-      if (!matchedDept) {
-        const lastName = deptNames[deptNames.length - 1];
-        if (lastName) {
-          const key = deptKey(deptNames.length, lastName);
-          const dept = deptMap.get(key);
-          if (dept) {
-            matchedDept = dept;
-          }
-        }
-      }
-      
-      if (matchedDept) {
-        matchedDept.employees.push(emp);
-      }
+    const deptNames = [emp.dept1, emp.dept2, emp.dept3, emp.dept4, emp.dept5, emp.dept6]
+      .filter((name): name is string => Boolean(name));
+    if (deptNames.length === 0) return;
+
+    // 从根部门开始，逐级在 children 中按名称精确查找
+    let matchedDept: Department | undefined;
+    let candidates: Department[] = rootDepts;
+    for (const name of deptNames) {
+      const found = candidates.find(dept => dept.name === name);
+      if (!found) break;
+      matchedDept = found;
+      candidates = found.children;
+    }
+
+    // 兜底：路径未完全匹配时，按 (层级数, 最后一级名称) 查找
+    if (!matchedDept) {
+      const lastName = deptNames[deptNames.length - 1];
+      matchedDept = deptMap.get(deptKey(deptNames.length, lastName));
+    }
+
+    if (matchedDept) {
+      matchedDept.employees.push(emp);
     }
   });
   
@@ -208,7 +177,7 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
   return sortDepts(rootDepts);
 }
 
-export function exportToExcel(_employees: Employee[], departments: Department[]): void {
+export function exportToExcel(departments: Department[]): void {
   const collectAllEmployees = (depts: Department[]): Employee[] => {
     let result: Employee[] = [];
     depts.forEach(dept => {
