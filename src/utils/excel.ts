@@ -60,9 +60,28 @@ export function parseOrgTemplateExcel(file: File): Promise<OrgTemplate[]> {
 }
 
 export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemplate[]): Department[] {
+  // deptMap: 以 (层级-名称) 为 key 去重；idMap: 以部门 id 反查，用于建立父子关系
   const deptMap = new Map<string, Department>();
+  const idMap = new Map<string, Department>();
   const deptKey = (level: number, name: string) => `${level}-${name}`;
-  
+
+  /** 获取或创建部门节点 */
+  const ensureDept = (
+    key: string,
+    id: string,
+    name: string,
+    level: number,
+    parentId: string | undefined,
+  ): Department => {
+    let dept = deptMap.get(key);
+    if (!dept) {
+      dept = { id, name, level, parentId, children: [], employees: [], expanded: level <= 3 };
+      deptMap.set(key, dept);
+      idMap.set(id, dept);
+    }
+    return dept;
+  };
+
   // 先从组织架构模板创建部门结构
   orgTemplates.forEach((template, idx) => {
     const levels = [
@@ -73,67 +92,46 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
       { level: 5, name: template.dept5 },
       { level: 6, name: template.dept6 },
     ].filter((l): l is { level: number; name: string } => Boolean(l.name) && l.name !== 'undefined');
-    
+
     let parentId: string | undefined;
-    
+
     levels.forEach(({ level, name }) => {
       const key = deptKey(level, name);
-      if (!deptMap.has(key)) {
-        deptMap.set(key, {
-          id: `dept-${idx}-${level}`,
-          name,
-          level,
-          parentId,
-          children: [],
-          employees: [],
-          expanded: level <= 3,
-        });
-      }
-      
-      const dept = deptMap.get(key)!;
+      const dept = ensureDept(key, `dept-${idx}-${level}`, name, level, parentId);
       if (template.deptLevel && dept.level === parseInt(template.deptLevel, 10)) {
         dept.leaderId = template.leaderId;
         dept.leaderName = template.leaderName;
       }
-      
       parentId = dept.id;
     });
   });
-  
+
   // 添加没有在模板中但员工所属的部门
   employees.forEach(emp => {
     const deptNames = [emp.dept1, emp.dept2, emp.dept3, emp.dept4, emp.dept5, emp.dept6].filter(Boolean);
     let parentId: string | undefined;
     let currentLevel = 1;
-    
+
     deptNames.forEach((name) => {
       if (!name) return;
       const key = deptKey(currentLevel, name);
-      if (!deptMap.has(key)) {
-        deptMap.set(key, {
-          id: `dept-auto-${currentLevel}-${name}`,
-          name,
-          level: currentLevel,
-          parentId,
-          children: [],
-          employees: [],
-          expanded: currentLevel <= 3,
-        });
-      }
-      const dept = deptMap.get(key)!;
-      parentId = dept.id;
+      ensureDept(key, `dept-auto-${currentLevel}-${name}`, name, currentLevel, parentId);
+      parentId = deptMap.get(key)!.id;
       currentLevel++;
     });
   });
-  
-  // 建立父子关系
+
+  // 建立父子关系（用 idMap 以部门 id 反查父节点，避免 id 与 key 混淆）
   const rootDepts: Department[] = [];
-  
+
   deptMap.forEach(dept => {
     if (dept.parentId) {
-      const parent = deptMap.get(dept.parentId);
+      const parent = idMap.get(dept.parentId);
       if (parent) {
         parent.children.push(dept);
+      } else {
+        // 父节点缺失时提升为根节点，避免节点丢失
+        rootDepts.push(dept);
       }
     } else {
       rootDepts.push(dept);
