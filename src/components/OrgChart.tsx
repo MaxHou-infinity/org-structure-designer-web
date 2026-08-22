@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee } from '../types';
+import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
 
 interface OrgChartProps {
   departments: Department[];
@@ -221,9 +222,11 @@ export function OrgChart({
   const isDraggingRef = useRef(false);
   const zoomHintTimer = useRef<number | null>(null);
 
-  // 画布区直接滚轮缩放：以光标为中心（Figma/白板画布直觉）。
-  // factor 乘法：deltaY<0 → 1.08（放大），否则 0.926（缩小）；范围 50-200。
+  // 画布区滚轮缩放：以光标为中心（Figma/白板画布直觉）。
+  // 触控板/鼠标会产生高频小幅 delta，因此做「增量累积 + 阈值」衰减，
+  // 避免轻微一滚就跳几十个百分点；累积超过阈值（±120px）才触发一次缩放。
   // 需 non-passive 监听并 preventDefault：Ctrl/Cmd+滚轮会触发浏览器页面缩放，必须拦截。
+  const wheelAccumRef = useRef(0);
   useEffect(() => {
     const el = zoomContainerRef.current;
     if (!el) return;
@@ -239,8 +242,12 @@ export function OrgChart({
         return;
       }
 
-      const factor = e.deltaY < 0 ? 1.08 : 0.926;
-      const newZoom = Math.min(Math.max(zoom * factor, 50), 200);
+      // 累积增量；阈值越大缩放越"钝"，触控板手感越稳。取 120px 约等于一次标准滚轮。
+      const { accumulated, steps } = accumZoomWheel(wheelAccumRef.current, e.deltaY);
+      wheelAccumRef.current = accumulated;
+      if (steps === 0) return;
+
+      const newZoom = applyZoomSteps(zoom, steps);
       // 已到边界（如 50/200）：放行默认滚动，避免手感卡死
       if (newZoom === zoom) return;
 
@@ -384,26 +391,26 @@ export function OrgChart({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      {/* 外层 wrapper：占位缩放后的滚动区域尺寸 */}
+      {/* 外层 wrapper：有数据时占位缩放后的滚动区域尺寸；空状态铺满画布视口 */}
       <div
         className="min-h-full relative"
         style={{
-          width: totalWidth * scale,
-          minHeight: contentHeight * scale,
+          width: departments.length > 0 ? totalWidth * scale : '100%',
+          minHeight: departments.length > 0 ? contentHeight * scale : '100%',
           cursor: 'default',
         }}
         title="滚轮缩放（50-200%）"
       >
-        <div
-          ref={canvasRef}
-          className="min-h-full p-8"
-          style={{ 
-            minWidth: totalWidth,
-            transform: `scale(${scale})`,
-            transformOrigin: 'top left'
-          }}
-        >
-          {departments.length > 0 ? (
+        {departments.length > 0 ? (
+          <div
+            ref={canvasRef}
+            className="min-h-full p-8"
+            style={{ 
+              minWidth: totalWidth,
+              transform: `scale(${scale})`,
+              transformOrigin: 'top left'
+            }}
+          >
             <div className="flex flex-col items-center">
               {renderTreeRecursive(
                 treeNodes,
@@ -416,12 +423,20 @@ export function OrgChart({
                 allEmployees
               )}
             </div>
-          ) : (
+          </div>
+        ) : (
+          /* 空状态：铺满画布视口（不套 transform:scale），始终固定居中，
+             不受缩放影响，避免 Hero 偏移/溢出导致文案排版错乱 */
+          <div
+            ref={canvasRef}
+            className="min-h-full w-full"
+            style={{ minWidth: '100%' }}
+          >
             <EmptyStateHero onDownloadTemplate={onDownloadTemplate} onLoadTestData={onLoadTestData} />
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* 缩放反馈气泡 */}
+        {/* 缩放反馈气泡（相对 wrapper 定位，始终可见） */}
         {zoomHint !== null && (
           <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-slate-900/80 text-white text-xs font-semibold backdrop-blur-sm pointer-events-none animate-fadeIn">
             {zoomHint}%
