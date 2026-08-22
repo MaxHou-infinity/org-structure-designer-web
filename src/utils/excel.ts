@@ -1,8 +1,17 @@
-import * as XLSX from 'xlsx';
 import { Employee, Department, OrgTemplate } from '../types';
 
+/** 懒加载 xlsx（体积 ~400KB，仅在上传/导出时按需加载） */
+let xlsxModule: typeof import('xlsx') | null = null;
+async function loadXlsx(): Promise<typeof import('xlsx')> {
+  if (!xlsxModule) {
+    xlsxModule = await import('xlsx');
+  }
+  return xlsxModule;
+}
+
 /** 读取 Excel 文件第一个工作表并转为 JSON 行 */
-function readFirstSheet(file: File): Promise<Record<string, unknown>[]> {
+async function readFirstSheet(file: File): Promise<Record<string, unknown>[]> {
+  const XLSX = await loadXlsx();
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -175,7 +184,8 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
   return sortDepts(rootDepts);
 }
 
-export function exportToExcel(departments: Department[]): void {
+export async function exportToExcel(departments: Department[]): Promise<void> {
+  const XLSX = await loadXlsx();
   const collectAllEmployees = (depts: Department[]): Employee[] => {
     let result: Employee[] = [];
     depts.forEach(dept => {
@@ -235,7 +245,8 @@ export function exportToExcel(departments: Department[]): void {
   XLSX.writeFile(workbook, '组织架构数据.xlsx');
 }
 
-export function generateSampleEmployeeTemplate(): void {
+export async function generateSampleEmployeeTemplate(): Promise<void> {
+  const XLSX = await loadXlsx();
   const data = [
     { '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
     { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
@@ -248,7 +259,8 @@ export function generateSampleEmployeeTemplate(): void {
   XLSX.writeFile(workbook, '员工信息模板.xlsx');
 }
 
-export function generateSampleOrgTemplate(): void {
+export async function generateSampleOrgTemplate(): Promise<void> {
+  const XLSX = await loadXlsx();
   const data = [
     { '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '', '部门级别': '3', '部门负责人工号': 'E001', '部门负责人': '张三' },
     { '一级部门': '技术部', '二级部门': '研发部', '三级部门': '后端组', '四级部门': '', '五级部门': '', '六级部门': '', '部门级别': '3', '部门负责人工号': '', '部门负责人': '' },

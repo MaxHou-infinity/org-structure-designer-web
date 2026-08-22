@@ -1,5 +1,4 @@
 import { useState, useRef, useCallback } from 'react';
-import html2canvas from 'html2canvas';
 import { Sidebar } from './components/Sidebar';
 import { OrgChart } from './components/OrgChart';
 import { Employee, Department, OrgTemplate } from './types';
@@ -331,6 +330,8 @@ export default function App() {
     if (!canvasRef.current) return;
     
     try {
+      // 懒加载 html2canvas（~200KB），仅导出时按需加载
+      const { default: html2canvas } = await import('html2canvas');
       const canvas = await html2canvas(canvasRef.current, {
         backgroundColor: '#F9FAFB',
         scale: 2,
@@ -348,9 +349,9 @@ export default function App() {
     }
   }, []);
   
-  const handleExportExcel = useCallback(() => {
+  const handleExportExcel = useCallback(async () => {
     try {
-      exportToExcel(departments);
+      await exportToExcel(departments);
     } catch (error) {
       console.error('导出Excel失败:', error);
       alert('导出Excel失败');

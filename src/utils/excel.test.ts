@@ -166,7 +166,7 @@ describe('exportToExcel', () => {
     vi.mocked(XLSX.writeFile).mockClear();
   });
 
-  it('导出时排除虚拟员工且不抛错（验证生成数据）', () => {
+  it('导出时排除虚拟员工且不抛错（验证生成数据）', async () => {
     const tree: Department[] = [{
       id: 'd1',
       name: '技术部',
@@ -178,7 +178,7 @@ describe('exportToExcel', () => {
       ],
       expanded: true,
     }];
-    expect(() => exportToExcel(tree)).not.toThrow();
+    await expect(exportToExcel(tree)).resolves.not.toThrow();
     expect(XLSX.writeFile).toHaveBeenCalledOnce();
   });
 });
