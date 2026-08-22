@@ -1,16 +1,17 @@
 # 组织架构设计工具 (Org Structure Designer)
 
-一个现代化的组织架构设计与管理工具，支持拖拽操作、虚拟员工（兼岗）、导出 PNG/Excel。
+> **v1.1.0** — 一个现代化的组织架构设计与管理工具，支持拖拽操作、虚拟员工（兼岗）、导出 PNG/Excel。
 
 ## 技术栈
 
-- **前端框架**: React 18 + TypeScript
-- **构建工具**: Vite
+- **前端框架**: React 18 + TypeScript (strict)
+- **构建工具**: Vite 6
 - **样式**: Tailwind CSS
 - **拖拽**: @dnd-kit
-- **Excel 处理**: xlsx
-- **图片导出**: html2canvas
+- **Excel 处理**: xlsx（按需加载）
+- **图片导出**: html2canvas（按需加载）
 - **图标**: Lucide React
+- **测试**: Vitest
 
 ## 功能特性
 
@@ -90,6 +91,31 @@ npm run lint
 npm run test
 ```
 
+> **注意**：本仓库已配置 `.npmrc` 相关的 `allowScripts` 白名单（见 `package.json`），
+> 若使用 npm 11+ 遇到 `EALLOWSCRIPTS` 错误，请检查用户级 `~/.npmrc` 中是否存在
+> 旧的 `allow-scripts=true` 配置（npm 11 已将其改为包名白名单语义），删除该行后重启终端即可。
+
+## 质量保障
+
+- **单元测试**: Vitest + 9 个用例，覆盖部门树构建、员工归属匹配、负责人设置、导出过滤等核心逻辑
+- **代码检查**: ESLint 9 (typescript-eslint + react-hooks)，`npm run lint` 零错误零警告
+- **类型安全**: TypeScript strict 模式，`tsc -b` 全量类型检查
+- **性能**: html2canvas/xlsx 动态导入，主包体积 852KB → 223KB（-74%）
+
+## 版本历史
+
+### v1.1.0 (2026-08-22)
+- **修复**: 部门树父子关系丢失 bug（员工全部归到一级部门），新增 idMap 反查
+- **优化**: 员工归属匹配改为沿树路径精确匹配（O(n²) → O(路径长度)）
+- **新增**: Vitest 单元测试体系（9 个用例）
+- **新增**: ESLint 9 flat config，`npm run lint` 可用
+- **性能**: html2canvas/xlsx 动态导入，主包 852KB → 223KB
+- **功能**: 缩放改为真正的 CSS transform scale（替代伪缩放）
+- **工程**: 添加 .gitignore，移除 node_modules/dist 跟踪；清理死代码
+
+### v1.0.0 (2026-03-07)
+- React + TypeScript 重构首版（从 Flask 迁移）
+
 ## Excel 模板格式
 
 ### 员工信息模板
@@ -111,7 +137,8 @@ npm run test
 │   │   ├── OrgChart.tsx       # 组织架构图组件
 │   │   └── Sidebar.tsx        # 侧边栏组件
 │   ├── utils/
-│   │   └── excel.ts           # Excel 处理工具
+│   │   ├── excel.ts           # Excel 处理工具
+│   │   └── excel.test.ts      # 单元测试（Vitest）
 │   ├── types/
 │   │   └── index.ts           # 类型定义
 │   ├── App.tsx                # 主应用组件
@@ -119,9 +146,11 @@ npm run test
 │   └── index.css              # 全局样式
 ├── index.html
 ├── package.json
+├── eslint.config.js           # ESLint 9 flat config
 ├── tsconfig.json
 ├── tailwind.config.js
-└── vite.config.ts
+├── vite.config.ts
+└── .gitignore
 ```
 
 ## 许可证
