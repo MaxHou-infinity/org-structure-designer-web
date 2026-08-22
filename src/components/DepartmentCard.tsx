@@ -12,7 +12,6 @@ interface DepartmentCardProps {
   onCreateVirtualEmployee: (deptId: string) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   allEmployees: Employee[];
-  zoom: number;
 }
 
 function DraggableEmployee({ 
@@ -110,7 +109,6 @@ export function DepartmentCard({
   onCreateVirtualEmployee,
   onChangeDepartmentLevel,
   allEmployees,
-  zoom,
 }: DepartmentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(department.name);
@@ -198,8 +196,8 @@ export function DepartmentCard({
         levelBg[department.level] || 'level-bg-1'
       } ${isOver ? 'ring-2 ring-indigo-400 bg-indigo-50/50' : ''} ${isDeptDragging ? 'opacity-50 scale-95' : ''}`}
       style={{ 
-        minWidth: 220 * (zoom / 100),
-        fontSize: `${14 * (zoom / 100)}px`,
+        minWidth: 220,
+        fontSize: '14px',
         zIndex: isDeptDragging ? 1000 : 1,
         position: 'relative'
       }}

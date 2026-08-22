@@ -99,7 +99,6 @@ const renderTreeRecursive = (
   onCreateVirtualEmployee: (deptId: string) => void,
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void,
   allEmployees: Employee[],
-  zoom: number,
   level: number = 0
 ): React.ReactNode => {
   if (nodes.length === 0) return null;
@@ -117,7 +116,6 @@ const renderTreeRecursive = (
             onCreateVirtualEmployee={onCreateVirtualEmployee}
             onChangeDepartmentLevel={onChangeDepartmentLevel}
             allEmployees={allEmployees}
-            zoom={zoom}
           />
           {node.department.expanded && node.children.length > 0 && (
             <div className="mt-4 pl-8 border-l-2 border-indigo-200 ml-4">
@@ -130,7 +128,6 @@ const renderTreeRecursive = (
                 onCreateVirtualEmployee,
                 onChangeDepartmentLevel,
                 allEmployees,
-                zoom,
                 level + 1
               )}
             </div>
@@ -156,6 +153,7 @@ export function OrgChart({
   canvasRef,
 }: OrgChartProps) {
   const [containerWidth, setContainerWidth] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
   const [dragData, setDragData] = useState<{ type: 'employee' | 'department'; data: Employee | Department } | null>(null);
   
   const sensors = useSensors(
@@ -166,16 +164,18 @@ export function OrgChart({
     })
   );
   
+  // 测量未缩放内容的实际宽高（transform scale 不影响 scrollWidth/scrollHeight）
   useEffect(() => {
-    const updateWidth = () => {
+    const updateSize = () => {
       if (canvasRef.current) {
         setContainerWidth(canvasRef.current.scrollWidth);
+        setContentHeight(canvasRef.current.scrollHeight);
       }
     };
     
-    updateWidth();
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
   }, [departments, zoom, canvasRef]);
   
   const handleDragStart = (event: DragStartEvent) => {
@@ -257,11 +257,13 @@ export function OrgChart({
     return check(target);
   };
   
-  const treeNodes = calculateTreeLayout(departments, 0, 0, zoom);
+  // 布局按 100% 基准计算，缩放由外层 transform: scale 完成
+  const scale = zoom / 100;
+  const treeNodes = calculateTreeLayout(departments, 0, 0, 100);
   
   const totalWidth = Math.max(
     containerWidth,
-    treeNodes.reduce((sum, node) => sum + node.width, 0) + (treeNodes.length - 1) * 40 * (zoom / 100)
+    treeNodes.reduce((sum, node) => sum + node.width, 0) + (treeNodes.length - 1) * 40
   );
   
   return (
@@ -270,37 +272,42 @@ export function OrgChart({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
+      {/* 外层 wrapper：占位缩放后的滚动区域尺寸 */}
       <div
-        ref={canvasRef}
-        className="min-h-full p-8"
-        style={{ 
-          minWidth: totalWidth,
-          transform: `scale(1)`,
-          transformOrigin: 'top left'
-        }}
+        className="min-h-full"
+        style={{ width: totalWidth * scale, minHeight: contentHeight * scale }}
       >
-        {departments.length > 0 ? (
-          <div className="flex flex-col items-center">
-            {renderTreeRecursive(
-              treeNodes,
-              onToggleExpand,
-              onUpdateDepartment,
-              onUpdateLeader,
-              onDeleteEmployee,
-              onCreateVirtualEmployee,
-              onChangeDepartmentLevel,
-              allEmployees,
-              zoom
-            )}
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-64 text-gray-400">
-            <div className="text-center">
-              <p className="text-lg mb-2">暂无组织架构数据</p>
-              <p className="text-sm">请上传员工信息或组织架构模板</p>
+        <div
+          ref={canvasRef}
+          className="min-h-full p-8"
+          style={{ 
+            minWidth: totalWidth,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left'
+          }}
+        >
+          {departments.length > 0 ? (
+            <div className="flex flex-col items-center">
+              {renderTreeRecursive(
+                treeNodes,
+                onToggleExpand,
+                onUpdateDepartment,
+                onUpdateLeader,
+                onDeleteEmployee,
+                onCreateVirtualEmployee,
+                onChangeDepartmentLevel,
+                allEmployees
+              )}
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="flex items-center justify-center h-64 text-gray-400">
+              <div className="text-center">
+                <p className="text-lg mb-2">暂无组织架构数据</p>
+                <p className="text-sm">请上传员工信息或组织架构模板</p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       
       <DragOverlay>
