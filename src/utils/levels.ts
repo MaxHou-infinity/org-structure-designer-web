@@ -1,0 +1,142 @@
+import { useSyncExternalStore } from 'react';
+import { LevelConfig } from '../types';
+import { validateLevelCode, validateLevelNumber, fullCode, normalizeLevelNumber } from './level';
+
+/**
+ * 职级配置系统。
+ * 应用内所有职级颜色 / 标签均来自这份动态配置（而非硬编码常量）。
+ * - 默认配置见 DEFAULT_LEVELS，首次启动时写入 localStorage 并作为初始值。
+ * - 用户通过「职级管理」面板修改后，经 updateLevelConfigs 持久化（浏览器版 localStorage）。
+ * - 多处组件（人员卡片、颜色图例、负责人圆点）通过 useLevelConfigs() 订阅，保持一致。
+ * - 序列代码 / 编号校验与 fullCode/配色派生委托给 ./level（纯函数模块），避免与状态 store 耦合。
+ */
+
+const STORAGE_KEY = 'org-designer.level-configs';
+
+/** 默认职级配置（与历史硬编码保持一致，作为迁移默认值） */
+export const DEFAULT_LEVELS: LevelConfig[] = [
+  { code: 'L', number: '0', label: '实习生', color: '#FF9999' },
+  { code: 'L', number: '1.1', label: '初级专员', color: '#FFCC99' },
+  { code: 'L', number: '1.2', label: '中级专员', color: '#FFFF99' },
+  { code: 'L', number: '2.1', label: '高级专员', color: '#CCFF99' },
+  { code: 'L', number: '2.2', label: '资深专员', color: '#99FF99' },
+  { code: 'L', number: '3.1', label: '团队经理', color: '#99FFCC' },
+  { code: 'E', number: '3.1', label: '专家', color: '#99CCFF' },
+  { code: 'L', number: '3.2', label: '部门经理', color: '#9999FF' },
+  { code: 'E', number: '3.2', label: '高级专家', color: '#CC99FF' },
+  { code: 'L', number: '4.1', label: '高级经理', color: '#FF99CC' },
+  { code: 'E', number: '4.1', label: '资深专家', color: '#FF99FF' },
+  { code: 'L', number: '4.2', label: '总监', color: '#CCCCCC' },
+  { code: 'L', number: '5', label: '副总裁', color: '#999999' },
+];
+
+/**
+ * 完整职级码（如 "L1.1"）。
+ * 直接复用 ./level 的 fullCode 派生。
+ */
+export { fullCode };
+
+/** 完整展示标签 = fullCode + '-' + label（如 "L1.1-初级专员"） */
+export function levelFullLabel(config: Pick<LevelConfig, 'code' | 'number' | 'label'>): string {
+  return `${fullCode(config)}-${config.label}`;
+}
+
+/** 校验单个职级配置，返回错误信息（空数组表示通过） */
+export function validateLevel(config: Pick<LevelConfig, 'code' | 'number' | 'label'>): string[] {
+  const errors: string[] = [];
+  if (!validateLevelCode(config.code)) {
+    errors.push('职级序列代码必须为 1-2 位大写英文字母（如 L / E / MD）');
+  }
+  if (!validateLevelNumber(config.number)) {
+    errors.push('职级编号必须为整数或一位小数（如 1 / 1.1）');
+  }
+  if (!config.label.trim()) {
+    errors.push('中文标签不能为空');
+  }
+  return errors;
+}
+
+/** 从 localStorage 读取配置，解析失败或结构非法时回退默认值（迁移默认值） */
+function loadFromStorage(): LevelConfig[] {
+  if (typeof localStorage === 'undefined') {
+    return DEFAULT_LEVELS;
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_LEVELS;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return DEFAULT_LEVELS;
+    const cleaned = parsed
+      .filter(
+        (item): item is LevelConfig =>
+          !!item &&
+          typeof item === 'object' &&
+          typeof (item as LevelConfig).code === 'string' &&
+          typeof (item as LevelConfig).number === 'string' &&
+          typeof (item as LevelConfig).label === 'string' &&
+          typeof (item as LevelConfig).color === 'string',
+      )
+      // 归一化防御：code 转大写、编号规范化、标签去空；再校验一次
+      .map((item) => ({
+        code: item.code.toUpperCase(),
+        number: normalizeLevelNumber(item.number),
+        label: item.label.trim(),
+        color: item.color,
+      }))
+      .filter((item) => validateLevel(item).length === 0);
+    return cleaned.length > 0 ? cleaned : DEFAULT_LEVELS;
+  } catch {
+    return DEFAULT_LEVELS;
+  }
+}
+
+let cache: LevelConfig[] | null = null;
+const listeners = new Set<() => void>();
+
+export function getLevelConfigs(): LevelConfig[] {
+  if (!cache) cache = loadFromStorage();
+  return cache;
+}
+
+function emit(): void {
+  listeners.forEach((listener) => listener());
+}
+
+function subscribe(callback: () => void): () => void {
+  listeners.add(callback);
+  return () => listeners.delete(callback);
+}
+
+/** 更新并持久化职级配置（浏览器版写 localStorage） */
+export function updateLevelConfigs(next: LevelConfig[]): void {
+  cache = next;
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
+  emit();
+}
+
+/** 恢复默认职级配置 */
+export function resetLevelConfigs(): void {
+  updateLevelConfigs(DEFAULT_LEVELS);
+}
+
+/**
+ * React Hook：订阅当前职级配置。
+ * 所有依赖职级颜色/标签的组件都用它，保证配置变更后全局一致刷新。
+ */
+export function useLevelConfigs(): LevelConfig[] {
+  return useSyncExternalStore(subscribe, getLevelConfigs, getLevelConfigs);
+}
+
+/** 根据职级码从配置中取颜色，找不到时用浅灰兜底 */
+export function getLevelColor(configs: LevelConfig[], code: string): string {
+  const match = configs.find((c) => fullCode(c) === code);
+  return match?.color || '#CCCCCC';
+}
+
+/** 根据职级码从配置中取完整标签，找不到时返回原职级码 */
+export function getLevelLabel(configs: LevelConfig[], code: string): string {
+  const match = configs.find((c) => fullCode(c) === code);
+  return match ? levelFullLabel(match) : code;
+}

@@ -256,21 +256,33 @@ export async function exportToExcel(departments: Department[]): Promise<void> {
   await saveFile('组织架构数据.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
-export async function generateSampleEmployeeTemplate(): Promise<void> {
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** 构建「员工信息」示例模板的 Excel 字节（调用方决定保存方式：Tauri 另存为 / 浏览器下载） */
+export async function buildSampleEmployeeTemplateBytes(): Promise<Uint8Array> {
   const XLSX = await loadXlsx();
   const data = [
     { '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
     { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
     { '姓名': '王五', '工号': 'E003', '职级': 'L4.2', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '', '四级部门': '', '五级部门': '', '六级部门': '' },
   ];
-  
+
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, '员工信息');
-  XLSX.writeFile(workbook, '员工信息模板.xlsx');
+  const out = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+  return new Uint8Array(out as ArrayBuffer);
 }
 
-export async function generateSampleOrgTemplate(): Promise<void> {
+/** 构建「员工信息」示例模板文件（Tauri 原生另存为 / 浏览器下载） */
+export async function generateSampleEmployeeTemplate(): Promise<void> {
+  const bytes = await buildSampleEmployeeTemplateBytes();
+  const { saveFile } = await import('./tauri');
+  await saveFile('员工信息模板.xlsx', bytes, XLSX_MIME);
+}
+
+/** 构建「组织架构」示例模板的 Excel 字节 */
+export async function buildSampleOrgTemplateBytes(): Promise<Uint8Array> {
   const XLSX = await loadXlsx();
   const data = [
     { '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '', '部门级别': '3', '部门负责人工号': 'E001', '部门负责人': '张三' },
@@ -278,9 +290,17 @@ export async function generateSampleOrgTemplate(): Promise<void> {
     { '一级部门': '技术部', '二级部门': '测试部', '三级部门': '', '四级部门': '', '五级部门': '', '六级部门': '', '部门级别': '2', '部门负责人工号': '', '部门负责人': '' },
     { '一级部门': '人力资源部', '二级部门': '', '三级部门': '', '四级部门': '', '五级部门': '', '六级部门': '', '部门级别': '1', '部门负责人工号': '', '部门负责人': '' },
   ];
-  
+
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, '组织架构');
-  XLSX.writeFile(workbook, '组织架构模板.xlsx');
+  const out = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+  return new Uint8Array(out as ArrayBuffer);
+}
+
+/** 构建「组织架构」示例模板文件（Tauri 原生另存为 / 浏览器下载） */
+export async function generateSampleOrgTemplate(): Promise<void> {
+  const bytes = await buildSampleOrgTemplateBytes();
+  const { saveFile } = await import('./tauri');
+  await saveFile('组织架构模板.xlsx', bytes, XLSX_MIME);
 }

@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as XLSX from 'xlsx';
-import { buildDepartmentTree, buildOrgExcelBytes, exportToExcel } from './excel';
+import {
+  buildDepartmentTree,
+  buildOrgExcelBytes,
+  exportToExcel,
+  buildSampleEmployeeTemplateBytes,
+  buildSampleOrgTemplateBytes,
+  generateSampleEmployeeTemplate,
+  generateSampleOrgTemplate,
+} from './excel';
 import { saveFile } from './tauri';
 
 vi.mock('./tauri', () => ({
@@ -208,5 +216,56 @@ describe('buildOrgExcelBytes / exportToExcel', () => {
       expect.any(Uint8Array),
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
+  });
+});
+
+describe('模板下载字节有效性', () => {
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+  beforeEach(() => {
+    vi.mocked(XLSX.writeFile).mockClear();
+    vi.mocked(saveFile).mockClear();
+  });
+
+  it('buildSampleEmployeeTemplateBytes 返回有效 xlsx 字节并含「员工信息」表', async () => {
+    const bytes = await buildSampleEmployeeTemplateBytes();
+    // xlsx zip 魔数 PK
+    expect(bytes[0]).toBe(0x50);
+    expect(bytes[1]).toBe(0x4B);
+    expect(bytes.length).toBeGreaterThan(500);
+
+    const wb = XLSX.read(bytes, { type: 'array' });
+    expect(wb.SheetNames).toContain('员工信息');
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets['员工信息']);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]['姓名']).toBe('张三');
+    expect(rows[0]['工号']).toBe('E001');
+    expect(rows[0]['职级']).toBe('L3.2');
+  });
+
+  it('buildSampleOrgTemplateBytes 返回有效 xlsx 字节并含「组织架构」表', async () => {
+    const bytes = await buildSampleOrgTemplateBytes();
+    expect(bytes[0]).toBe(0x50);
+    expect(bytes[1]).toBe(0x4B);
+    expect(bytes.length).toBeGreaterThan(500);
+
+    const wb = XLSX.read(bytes, { type: 'array' });
+    expect(wb.SheetNames).toContain('组织架构');
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets['组织架构']);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]['一级部门']).toBe('技术部');
+    expect(rows[0]['部门级别']).toBe('3');
+  });
+
+  it('generateSampleEmployeeTemplate 调用 saveFile 保存员工模板', async () => {
+    await generateSampleEmployeeTemplate();
+    expect(saveFile).toHaveBeenCalledOnce();
+    expect(saveFile).toHaveBeenCalledWith('员工信息模板.xlsx', expect.any(Uint8Array), XLSX_MIME);
+  });
+
+  it('generateSampleOrgTemplate 调用 saveFile 保存组织模板', async () => {
+    await generateSampleOrgTemplate();
+    expect(saveFile).toHaveBeenCalledOnce();
+    expect(saveFile).toHaveBeenCalledWith('组织架构模板.xlsx', expect.any(Uint8Array), XLSX_MIME);
   });
 });

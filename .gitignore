@@ -36,3 +36,6 @@ pnpm-debug.log*
 # Tauri/Rust
 src-tauri/target/
 src-tauri/gen/schemas
+
+# AgentTeams 团队状态
+.agent-teams/

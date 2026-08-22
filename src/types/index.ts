@@ -36,34 +36,17 @@ export interface OrgTemplate {
   leaderName?: string;
 }
 
-export const LEVEL_COLORS: Record<string, string> = {
-  'L0': '#FF9999',
-  'L1.1': '#FFCC99',
-  'L1.2': '#FFFF99',
-  'L2.1': '#CCFF99',
-  'L2.2': '#99FF99',
-  'L3.1': '#99FFCC',
-  'E3.1': '#99CCFF',
-  'L3.2': '#9999FF',
-  'E3.2': '#CC99FF',
-  'L4.1': '#FF99CC',
-  'E4.1': '#FF99FF',
-  'L4.2': '#CCCCCC',
-  'L5': '#999999',
-};
-
-export const LEVEL_LABELS: Record<string, string> = {
-  'L0': 'L0-实习生',
-  'L1.1': 'L1.1-初级专员',
-  'L1.2': 'L1.2-中级专员',
-  'L2.1': 'L2.1-高级专员',
-  'L2.2': 'L2.2-资深专员',
-  'L3.1': 'L3.1-团队经理',
-  'E3.1': 'E3.1-专家',
-  'L3.2': 'L3.2-部门经理',
-  'E3.2': 'E3.2-高级专家',
-  'L4.1': 'L4.1-高级经理',
-  'E4.1': 'E4.1-资深专家',
-  'L4.2': 'L4.2-总监',
-  'L5': 'L5-副总裁',
-};
+/**
+ * 职级配置项。
+ * - code: 职级序列代码，1-2 位大写英文字母（如 L / E / MD）。
+ * - number: 职级编号，整数或一位小数（如 1 / 1.1 / 2.5），以字符串存储避免浮点精度损失。
+ * - label: 中文标签（如「初级专员」）。
+ * - color: 关联色（十六进制），新建时可走 12 色哈希自动分配。
+ * 完整职级码 fullCode = code + number（如 "L1.1"），用作去重 / 查找 key。
+ */
+export interface LevelConfig {
+  code: string;
+  number: string;
+  label: string;
+  color: string;
+}

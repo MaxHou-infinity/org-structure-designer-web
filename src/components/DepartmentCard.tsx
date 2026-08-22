@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight, User, Users, Building2 } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { Department, Employee, LEVEL_COLORS } from '../types';
+import { Department, Employee } from '../types';
+import { useLevelConfigs, getLevelColor } from '../utils/levels';
 
 interface DepartmentCardProps {
   department: Department;
@@ -23,15 +24,16 @@ function DraggableEmployee({
     id: employee.id,
     data: employee,
   });
-  
-  const levelColor = LEVEL_COLORS[employee.level] || '#CCCCCC';
+
+  const levelConfigs = useLevelConfigs();
+  const levelColor = getLevelColor(levelConfigs, employee.level);
   
   return (
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      className={`flex items-center gap-1 px-2 py-1 rounded text-xs cursor-move hover:shadow-sm transition-shadow ${
+      className={`employee-tag flex items-center gap-1 px-2 py-1 rounded-lg text-xs cursor-move hover:shadow-sm transition-shadow ${
         isDragging ? 'opacity-50' : ''
       }`}
       style={{ backgroundColor: levelColor + '40' }}
@@ -119,6 +121,7 @@ export function DepartmentCard({
   const [showLevelMenu, setShowLevelMenu] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const levelConfigs = useLevelConfigs();
   
   // 部门拖拽
   const { attributes: deptAttributes, listeners: deptListeners, setNodeRef: setDeptRef, isDragging: isDeptDragging } = useDraggable({
@@ -192,7 +195,7 @@ export function DepartmentCard({
       }}
       {...deptAttributes}
       {...deptListeners}
-      className={`flex flex-col department-card rounded-xl shadow-soft border-0 cursor-move ${
+      className={`flex flex-col department-card rounded-2xl shadow-soft border-0 cursor-move ${
         levelBg[department.level] || 'level-bg-1'
       } ${isOver ? 'ring-2 ring-indigo-400 bg-indigo-50/50' : ''} ${isDeptDragging ? 'opacity-50 scale-95' : ''}`}
       style={{ 
@@ -204,7 +207,7 @@ export function DepartmentCard({
       onContextMenu={handleContextMenu}
     >
       {/* 部门头部 */}
-      <div className={`flex items-center justify-between px-4 py-3 ${levelHeaderBg[department.level] || 'bg-gray-50'} rounded-t-xl`}>
+      <div className={`flex items-center justify-between px-4 py-3 ${levelHeaderBg[department.level] || 'bg-gray-50'} rounded-t-2xl`}>
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {department.children.length > 0 ? (
             <button
@@ -293,7 +296,7 @@ export function DepartmentCard({
                 >
                   <div
                     className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: LEVEL_COLORS[emp.level] || '#CCCCCC' }}
+                    style={{ backgroundColor: getLevelColor(levelConfigs, emp.level) }}
                   />
                   {emp.name} ({emp.employeeId})
                 </button>

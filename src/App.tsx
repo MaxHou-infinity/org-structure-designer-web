@@ -1,12 +1,16 @@
 import { useState, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { OrgChart } from './components/OrgChart';
+import { TopBar } from './components/TopBar';
+import { LevelManagerModal } from './components/LevelManagerModal';
 import { Employee, Department, OrgTemplate } from './types';
 import { 
   parseEmployeeExcel, 
   parseOrgTemplateExcel, 
   buildDepartmentTree, 
-  exportToExcel 
+  exportToExcel,
+  generateSampleEmployeeTemplate,
+  generateSampleOrgTemplate,
 } from './utils/excel';
 import { saveFile } from './utils/tauri';
 
@@ -50,7 +54,9 @@ export default function App() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [zoom, setZoom] = useState(100);
   const [allEmployeesFlat, setAllEmployeesFlat] = useState<Employee[]>([]);
+  const [levelManagerOpen, setLevelManagerOpen] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   
   const handleEmployeeFileUpload = useCallback(async (file: File) => {
     try {
@@ -364,13 +370,35 @@ export default function App() {
     }
   }, [departments]);
   
-  // 查找部门辅助函数
+  // 缩放：按钮 + 画布滚轮共用同一增量逻辑（50-200 边界钳制，UX 最终决策上限 200）
+  const clampZoom = useCallback((z: number) => Math.min(Math.max(z, 50), 200), []);
+  const handleZoomChange = useCallback((next: number) => {
+    setZoom(clampZoom(next));
+  }, [clampZoom]);
   const handleZoomIn = useCallback(() => {
-    setZoom(prev => Math.min(prev + 10, 150));
-  }, []);
-  
+    setZoom(z => clampZoom(z + 10));
+  }, [clampZoom]);
   const handleZoomOut = useCallback(() => {
-    setZoom(prev => Math.max(prev - 10, 50));
+    setZoom(z => clampZoom(z - 10));
+  }, [clampZoom]);
+
+  // 下载示例模板（Tauri 原生另存为 / 浏览器回退下载）
+  const handleDownloadEmployeeTemplate = useCallback(async () => {
+    try {
+      await generateSampleEmployeeTemplate();
+    } catch (error) {
+      console.error('下载员工信息模板失败:', error);
+      alert('下载员工信息模板失败');
+    }
+  }, []);
+
+  const handleDownloadOrgTemplate = useCallback(async () => {
+    try {
+      await generateSampleOrgTemplate();
+    } catch (error) {
+      console.error('下载组织架构模板失败:', error);
+      alert('下载组织架构模板失败');
+    }
   }, []);
   
   // 创建新部门
@@ -510,38 +538,62 @@ export default function App() {
   }, []);
   
   return (
-    <div className="flex h-screen">
-      <Sidebar
-        onEmployeeFileUpload={handleEmployeeFileUpload}
-        onOrgTemplateUpload={handleOrgTemplateUpload}
-        onExportPng={handleExportPng}
-        onExportExcel={handleExportExcel}
+    <div className="flex flex-col h-screen">
+      <TopBar
+        onDownloadEmployeeTemplate={handleDownloadEmployeeTemplate}
+        onDownloadOrgTemplate={handleDownloadOrgTemplate}
+        onManageLevels={() => setLevelManagerOpen(true)}
+        zoom={zoom}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
-        onReset={handleReset}
-        onLoadTestData={handleLoadTestData}
-        onCreateDepartment={handleCreateDepartment}
-        departments={departments}
-        zoom={zoom}
-        hasData={departments.length > 0}
       />
-      
-      <main className="flex-1 overflow-auto p-6" style={{ background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)' }}>
-        <OrgChart
+
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar
+          onEmployeeFileUpload={handleEmployeeFileUpload}
+          onOrgTemplateUpload={handleOrgTemplateUpload}
+          onExportPng={handleExportPng}
+          onExportExcel={handleExportExcel}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onReset={handleReset}
+          onLoadTestData={handleLoadTestData}
+          onCreateDepartment={handleCreateDepartment}
           departments={departments}
-          onToggleExpand={handleToggleExpand}
-          onUpdateDepartment={handleUpdateDepartment}
-          onUpdateLeader={handleUpdateLeader}
-          onMoveEmployee={handleMoveEmployee}
-          onMoveDepartment={handleMoveDepartment}
-          onChangeDepartmentLevel={handleChangeDepartmentLevel}
-          onDeleteEmployee={handleDeleteEmployee}
-          onCreateVirtualEmployee={handleCreateVirtualEmployee}
-          allEmployees={allEmployeesFlat}
           zoom={zoom}
-          canvasRef={canvasRef}
+          hasData={departments.length > 0}
         />
-      </main>
+
+        <main
+          ref={mainRef}
+          className="flex-1 overflow-auto p-6"
+          style={{ background: 'radial-gradient(1200px 600px at 20% 0%, rgba(99,102,241,0.06) 0%, rgba(139,92,246,0.05) 45%, transparent 100%), radial-gradient(1000px 500px at 80% 100%, rgba(139,92,246,0.04) 0%, transparent 55%), linear-gradient(135deg, #f8fafc 0%, #eef1f6 100%)' }}
+        >
+          <OrgChart
+            departments={departments}
+            onToggleExpand={handleToggleExpand}
+            onUpdateDepartment={handleUpdateDepartment}
+            onUpdateLeader={handleUpdateLeader}
+            onMoveEmployee={handleMoveEmployee}
+            onMoveDepartment={handleMoveDepartment}
+            onChangeDepartmentLevel={handleChangeDepartmentLevel}
+            onDeleteEmployee={handleDeleteEmployee}
+            onCreateVirtualEmployee={handleCreateVirtualEmployee}
+            allEmployees={allEmployeesFlat}
+            zoom={zoom}
+            canvasRef={canvasRef}
+            zoomContainerRef={mainRef}
+            onZoomChange={handleZoomChange}
+            onDownloadTemplate={handleDownloadEmployeeTemplate}
+            onLoadTestData={handleLoadTestData}
+          />
+        </main>
+      </div>
+
+      <LevelManagerModal
+        open={levelManagerOpen}
+        onClose={() => setLevelManagerOpen(false)}
+      />
     </div>
   );
 }

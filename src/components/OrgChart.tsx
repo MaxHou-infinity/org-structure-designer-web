@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee } from '../types';
@@ -16,6 +16,10 @@ interface OrgChartProps {
   allEmployees: Employee[];
   zoom: number;
   canvasRef: React.RefObject<HTMLDivElement>;
+  zoomContainerRef: React.RefObject<HTMLDivElement>;
+  onZoomChange: (nextZoom: number) => void;
+  onDownloadTemplate: () => void;
+  onLoadTestData: () => void;
 }
 
 interface TreeNode {
@@ -138,6 +142,60 @@ const renderTreeRecursive = (
   );
 };
 
+/** 空状态 Hero（初次使用引导）：三步引导 + CTA */
+function EmptyStateHero({ onDownloadTemplate, onLoadTestData }: {
+  onDownloadTemplate: () => void;
+  onLoadTestData: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-center min-h-full p-10">
+      <div className="max-w-lg w-full rounded-3xl bg-white/70 backdrop-blur-xl border border-white/60 shadow-soft p-10 text-center animate-fadeInUp">
+        <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 grid place-items-center text-indigo-500 mb-6">
+          <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <rect x="3" y="4" width="7" height="6" rx="1.5" />
+            <rect x="14" y="4" width="7" height="6" rx="1.5" />
+            <rect x="8.5" y="14" width="7" height="6" rx="1.5" />
+            <path d="M6.5 10v2.5h4v1.5M17.5 10v2.5" />
+          </svg>
+        </div>
+        <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">开始设计您的组织架构</h2>
+        <p className="text-sm text-slate-500 mb-8">三步即可在几分钟内生成专业组织架构图</p>
+
+        <div className="space-y-4 text-left mb-8">
+          {[
+            { n: '①', title: '下载模板', desc: '去【工具模板】下载「员工信息」「组织架构」模板' },
+            { n: '②', title: '填写数据', desc: '按模板列填写员工与部门信息' },
+            { n: '③', title: '上传文件', desc: '在左侧「文件上传」上传 Excel' },
+          ].map((step) => (
+            <div key={step.n} className="flex items-start gap-3">
+              <span className="w-7 h-7 rounded-full bg-indigo-500 text-white text-sm font-semibold grid place-items-center shrink-0">{step.n}</span>
+              <div>
+                <div className="text-sm font-semibold text-slate-800">{step.title}</div>
+                <div className="text-xs text-slate-500">{step.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-center gap-3">
+          <button
+            onClick={onDownloadTemplate}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white font-medium shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
+          >
+            去下载模板
+          </button>
+          <button
+            onClick={onLoadTestData}
+            className="px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 hover:shadow-sm transition-all"
+          >
+            载入示例数据
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function OrgChart({
   departments,
   onToggleExpand,
@@ -151,11 +209,63 @@ export function OrgChart({
   allEmployees,
   zoom,
   canvasRef,
+  zoomContainerRef,
+  onZoomChange,
+  onDownloadTemplate,
+  onLoadTestData,
 }: OrgChartProps) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
   const [dragData, setDragData] = useState<{ type: 'employee' | 'department'; data: Employee | Department } | null>(null);
-  
+  const [zoomHint, setZoomHint] = useState<number | null>(null);
+  const isDraggingRef = useRef(false);
+  const zoomHintTimer = useRef<number | null>(null);
+
+  // 画布区直接滚轮缩放：以光标为中心（Figma/白板画布直觉）。
+  // factor 乘法：deltaY<0 → 1.08（放大），否则 0.926（缩小）；范围 50-200。
+  // 需 non-passive 监听并 preventDefault：Ctrl/Cmd+滚轮会触发浏览器页面缩放，必须拦截。
+  useEffect(() => {
+    const el = zoomContainerRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // 拖拽中抑制缩放，避免误触
+      if (isDraggingRef.current) return;
+
+      // Shift + 滚轮 → 横向平移
+      if (e.shiftKey) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+        return;
+      }
+
+      const factor = e.deltaY < 0 ? 1.08 : 0.926;
+      const newZoom = Math.min(Math.max(zoom * factor, 50), 200);
+      // 已到边界（如 50/200）：放行默认滚动，避免手感卡死
+      if (newZoom === zoom) return;
+
+      const scaleOld = zoom / 100;
+      const scaleNew = newZoom / 100;
+      e.preventDefault();
+
+      // 以光标为中心：offset = 光标相对画布容器左上角
+      const rect = el.getBoundingClientRect();
+      const offsetX = e.clientX - rect.left;
+      const offsetY = e.clientY - rect.top;
+      el.scrollLeft = (el.scrollLeft + offsetX) * (scaleNew / scaleOld) - offsetX;
+      el.scrollTop = (el.scrollTop + offsetY) * (scaleNew / scaleOld) - offsetY;
+
+      setZoomHint(newZoom);
+      if (zoomHintTimer.current) window.clearTimeout(zoomHintTimer.current);
+      zoomHintTimer.current = window.setTimeout(() => setZoomHint(null), 800);
+
+      onZoomChange(newZoom);
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [zoom, onZoomChange, zoomContainerRef]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -179,6 +289,7 @@ export function OrgChart({
   }, [departments, zoom, canvasRef]);
   
   const handleDragStart = (event: DragStartEvent) => {
+    isDraggingRef.current = true;
     const data = event.active.data.current;
     if (data?.type === 'department') {
       setDragData({ type: 'department', data: data.department });
@@ -188,6 +299,7 @@ export function OrgChart({
   };
   
   const handleDragEnd = (event: DragEndEvent) => {
+    isDraggingRef.current = false;
     const prevDragData = dragData;
     setDragData(null);
     
@@ -274,8 +386,13 @@ export function OrgChart({
     >
       {/* 外层 wrapper：占位缩放后的滚动区域尺寸 */}
       <div
-        className="min-h-full"
-        style={{ width: totalWidth * scale, minHeight: contentHeight * scale }}
+        className="min-h-full relative"
+        style={{
+          width: totalWidth * scale,
+          minHeight: contentHeight * scale,
+          cursor: 'default',
+        }}
+        title="滚轮缩放（50-200%）"
       >
         <div
           ref={canvasRef}
@@ -300,14 +417,16 @@ export function OrgChart({
               )}
             </div>
           ) : (
-            <div className="flex items-center justify-center h-64 text-gray-400">
-              <div className="text-center">
-                <p className="text-lg mb-2">暂无组织架构数据</p>
-                <p className="text-sm">请上传员工信息或组织架构模板</p>
-              </div>
-            </div>
+            <EmptyStateHero onDownloadTemplate={onDownloadTemplate} onLoadTestData={onLoadTestData} />
           )}
         </div>
+
+        {/* 缩放反馈气泡 */}
+        {zoomHint !== null && (
+          <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-slate-900/80 text-white text-xs font-semibold backdrop-blur-sm pointer-events-none animate-fadeIn">
+            {zoomHint}%
+          </div>
+        )}
       </div>
       
       <DragOverlay>
