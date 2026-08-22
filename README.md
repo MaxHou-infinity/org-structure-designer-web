@@ -9,7 +9,7 @@
 - **样式**: Tailwind CSS
 - **拖拽**: @dnd-kit
 - **Excel 处理**: xlsx
-- **图片导出**: html2actus
+- **图片导出**: html2canvas
 - **图标**: Lucide React
 
 ## 功能特性
@@ -82,6 +82,12 @@ npm run build
 
 # 预览生产版本
 npm run preview
+
+# 代码检查（ESLint）
+npm run lint
+
+# 单元测试（Vitest）
+npm run test
 ```
 
 ## Excel 模板格式
