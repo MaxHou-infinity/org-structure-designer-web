@@ -39,3 +39,6 @@ src-tauri/gen/schemas
 
 # AgentTeams 团队状态
 .agent-teams/
+
+# 内部需求文档（不公开，勿提交到 GitHub）
+docs/v300-requirements.md
