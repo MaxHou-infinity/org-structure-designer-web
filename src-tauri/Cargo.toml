@@ -1,15 +1,15 @@
 [package]
-name = "org-structure-designer"
+name = "orgcompass"
 version = "2.0.4"
-description = "组织架构设计工具 - 桌面版 (Tauri)"
+description = "组织罗盘 OrgCompass - 桌面版 (Tauri)"
 authors = ["Max Hou"]
 license = "Apache-2.0"
-repository = "https://github.com/MaxHou-infinity/org-structure-designer-web"
+repository = "https://github.com/MaxHou-infinity/orgcompass"
 edition = "2021"
 rust-version = "1.77.2"
 
 [lib]
-name = "org_structure_designer_lib"
+name = "orgcompass_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

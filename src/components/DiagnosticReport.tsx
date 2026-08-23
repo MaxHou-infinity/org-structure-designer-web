@@ -294,7 +294,7 @@ export function DiagnosticReport({
         </section>
 
         <footer className="text-xs text-slate-400 text-center pt-4 border-t border-slate-100">
-          由组织架构设计器 v2.0.4 生成 · {projectName} · {scenarioName} · {generatedAt}
+          由组织罗盘 OrgCompass v2.0.4 生成 · {projectName} · {scenarioName} · {generatedAt}
         </footer>
       </div>
     </div>

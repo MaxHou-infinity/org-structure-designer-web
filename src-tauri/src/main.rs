@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  org_structure_designer_lib::run();
+  orgcompass_lib::run();
 }

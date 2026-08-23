@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "OrgStructureDesigner",
+  "productName": "OrgCompass",
   "version": "2.0.4",
-  "identifier": "com.maxhou.org-structure-designer",
+  "identifier": "com.maxhou.orgcompass",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "组织架构设计工具",
+        "title": "组织罗盘 OrgCompass",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

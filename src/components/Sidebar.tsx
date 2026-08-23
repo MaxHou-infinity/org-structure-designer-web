@@ -67,8 +67,8 @@ export function Sidebar({
   return (
     <div className="w-64 glass border-r border-white/20 flex flex-col h-full">
       <div className="p-4 border-b border-white/30 bg-gradient-to-br from-indigo-500 via-indigo-600 to-purple-600 text-white">
-        <h1 className="text-base font-bold tracking-tight">组织架构设计</h1>
-        <p className="text-xs text-white/70 mt-0.5">Org Structure Designer</p>
+        <h1 className="text-base font-bold tracking-tight">组织罗盘</h1>
+        <p className="text-xs text-white/70 mt-0.5">OrgCompass</p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-5">
