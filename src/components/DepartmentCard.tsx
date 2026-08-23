@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight, User, Users, Building2 } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee } from '../types';
@@ -104,20 +105,24 @@ function EmployeeList({
         >
           <DraggableEmployee employee={emp} selected={selectedEmpIds?.has(emp.id)} onSelect={onSelect} />
           {contextMenu?.empId === emp.id && (
-            <div
-              className="fixed bg-white border border-gray-200 rounded shadow-lg py-1 z-50"
-              style={{ left: contextMenu.x, top: contextMenu.y }}
-            >
-              <button
-                className="w-full px-4 py-1 text-left text-sm hover:bg-gray-100 text-red-500"
-                onClick={() => {
-                  onDelete(emp.id);
-                  setContextMenu(null);
-                }}
+            createPortal(
+              <div
+                className="fixed bg-white border border-gray-200 rounded shadow-lg py-1 z-50"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+                onClick={(e) => e.stopPropagation()}
               >
-                删除员工
-              </button>
-            </div>
+                <button
+                  className="w-full px-4 py-1 text-left text-sm hover:bg-gray-100 text-red-500"
+                  onClick={() => {
+                    onDelete(emp.id);
+                    setContextMenu(null);
+                  }}
+                >
+                  删除员工
+                </button>
+              </div>,
+              document.body,
+            )
           )}
         </div>
       ))}
@@ -231,7 +236,9 @@ export function DepartmentCard({
       style={{ 
         minWidth: 220,
         fontSize: '14px',
-        zIndex: isDeptDragging ? 1000 : 1,
+        // 拖拽/负责人搜索下拉打开时抬高本卡层级，避免被扁平的子部门卡（DOM 顺序在后）遮住。
+        // 负责人搜索下拉是卡内流式元素，若不抬高父卡层级，后代生成的子部门卡会绘制在其上方。
+        zIndex: isDeptDragging ? 1000 : (showLeaderSearch ? 30 : 1),
         position: 'relative'
       }}
       onContextMenu={handleContextMenu}
@@ -359,77 +366,82 @@ export function DepartmentCard({
         </div>
       </div>
       
-      {/* 右键菜单 - 使用 fixed 确保不受父元素限制 */}
-      {showContextMenu && (
-        <div
-          className="fixed bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[180px]"
-          style={{ zIndex: 99999, left: contextMenuPos.x, top: contextMenuPos.y }}
-          ref={cardRef}
-        >
-          <button
-            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowLevelMenu(!showLevelMenu);
-            }}
+      {/* 右键菜单 - portal 到 document.body，避免被画布 transform:scale 的坐标系污染。
+          position:fixed 在 transform 祖先内会以其为参照系而非视口，导致坐标错乱（菜单跑到画布右侧）。
+          用 createPortal 渲染到 body，clientX/clientY 才按视口正确生效。 */}
+      {showContextMenu &&
+        createPortal(
+          <div
+            className="fixed bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[180px]"
+            style={{ zIndex: 99999, left: contextMenuPos.x, top: contextMenuPos.y }}
+            ref={cardRef}
+            onClick={(e) => e.stopPropagation()}
           >
-            <Building2 className="w-4 h-4 text-indigo-500" />
-            调整层级归属
-            <span className="ml-auto text-gray-400">{showLevelMenu ? '▲' : '▼'}</span>
-          </button>
-          
-          {showLevelMenu && (
-            <div className="border-t border-gray-100 py-1">
-              <button
-                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onChangeDepartmentLevel(department.id, 1, null);
-                  setShowContextMenu(false);
-                  setShowLevelMenu(false);
-                }}
-              >
-                设为 L1 (一级部门)
-              </button>
-              <button
-                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onChangeDepartmentLevel(department.id, 2, null);
-                  setShowContextMenu(false);
-                  setShowLevelMenu(false);
-                }}
-              >
-                设为 L2 (二级部门)
-              </button>
-              <button
-                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onChangeDepartmentLevel(department.id, 3, null);
-                  setShowContextMenu(false);
-                  setShowLevelMenu(false);
-                }}
-              >
-                设为 L3 (三级部门)
-              </button>
-            </div>
-          )}
-          
-          <div className="border-t border-gray-100" />
-          <button
-            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCreateVirtualEmployee(department.id);
-              setShowContextMenu(false);
-            }}
-          >
-            <User className="w-4 h-4 text-green-500" />
-            创建虚拟员工
-          </button>
-        </div>
-      )}
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowLevelMenu(!showLevelMenu);
+              }}
+            >
+              <Building2 className="w-4 h-4 text-indigo-500" />
+              调整层级归属
+              <span className="ml-auto text-gray-400">{showLevelMenu ? '▲' : '▼'}</span>
+            </button>
+
+            {showLevelMenu && (
+              <div className="border-t border-gray-100 py-1">
+                <button
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChangeDepartmentLevel(department.id, 1, null);
+                    setShowContextMenu(false);
+                    setShowLevelMenu(false);
+                  }}
+                >
+                  设为 L1 (一级部门)
+                </button>
+                <button
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChangeDepartmentLevel(department.id, 2, null);
+                    setShowContextMenu(false);
+                    setShowLevelMenu(false);
+                  }}
+                >
+                  设为 L2 (二级部门)
+                </button>
+                <button
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChangeDepartmentLevel(department.id, 3, null);
+                    setShowContextMenu(false);
+                    setShowLevelMenu(false);
+                  }}
+                >
+                  设为 L3 (三级部门)
+                </button>
+              </div>
+            )}
+
+            <div className="border-t border-gray-100" />
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateVirtualEmployee(department.id);
+                setShowContextMenu(false);
+              }}
+            >
+              <User className="w-4 h-4 text-green-500" />
+              创建虚拟员工
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

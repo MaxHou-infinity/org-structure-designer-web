@@ -47,15 +47,14 @@ export function SearchModal({
     onHighlight({ deptIds, empIds });
   }, [query, result.matches, onHighlight, onClearHighlight]);
 
-  // 打开时聚焦输入框
+  // 打开时聚焦输入框（只依赖 open：仅在弹窗打开瞬间重置一次，避免输入过程中
+  // 因父组件 onClearHighlight 引用变化而误清空 query，导致中文输入被反复清除）
   useEffect(() => {
     if (open) {
       setQuery('');
-      onClearHighlight();
-      // 下一帧聚焦，等待动画渲染
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [open, onClearHighlight]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

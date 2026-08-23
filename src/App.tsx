@@ -11,6 +11,7 @@ import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { SearchHighlight } from './components/SearchContext';
 import { Employee, Department, OrgTemplate } from './types';
 import { expandDepartments, SearchMatch } from './utils/search';
+import { moveEmployeesBetween } from './utils/departments';
 import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
 import {
   parseEmployeeExcel,
@@ -100,6 +101,8 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchHighlight, setSearchHighlight] = useState<SearchHighlight>(EMPTY_HIGHLIGHT);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  // v2.0.3 修复：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构
+  const [orgTemplates, setOrgTemplates] = useState<OrgTemplate[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
 
@@ -157,25 +160,33 @@ export default function App() {
   const handleEmployeeFileUpload = useCallback(async (file: File) => {
     try {
       const parsedEmployees = await parseEmployeeExcel(file);
-      setBoth(() => ({
-        departments: buildDepartmentTree(parsedEmployees, []),
-        allEmployeesFlat: parsedEmployees,
-      }));
+      // 用已保存的组织模板（若有）重建，保留模板的部门层级与负责人结构
+      const tree = buildDepartmentTree(parsedEmployees, orgTemplates);
+      setBoth(() => ({ departments: tree, allEmployeesFlat: parsedEmployees }));
+      if (parsedEmployees.length > 0) {
+        showToast(`已导入 ${parsedEmployees.length} 名员工`);
+      } else {
+        showToast('员工文件无有效数据，请检查格式');
+      }
     } catch (error) {
       console.error('解析员工文件失败:', error);
-      alert('解析员工文件失败，请检查文件格式');
+      showToast('解析员工文件失败，请检查格式');
     }
-  }, [setBoth]);
+  }, [setBoth, showToast, orgTemplates]);
 
   const handleOrgTemplateUpload = useCallback(async (file: File) => {
     try {
       const templates = await parseOrgTemplateExcel(file);
-      setDepartments(() => buildDepartmentTree(allEmployeesFlat, templates));
+      // 保存模板，供后续员工上传时重建结构
+      setOrgTemplates(templates);
+      const tree = buildDepartmentTree(allEmployeesFlat, templates);
+      setDepartments(() => tree);
+      showToast(`已导入组织架构（${templates.length} 个部门）`);
     } catch (error) {
       console.error('解析组织架构文件失败:', error);
-      alert('解析组织架构文件失败，请检查文件格式');
+      showToast('解析组织架构文件失败，请检查格式');
     }
-  }, [allEmployeesFlat, setDepartments]);
+  }, [allEmployeesFlat, setDepartments, setOrgTemplates, showToast]);
 
   /** —— 部门/员工操作（历史感知） —— */
   const handleToggleExpand = useCallback((id: string) => {
@@ -254,31 +265,7 @@ export default function App() {
 
   /** 批量移动员工：从各自所在部门移除，一次性加入目标部门（历史感知，与单移动口径一致） */
   const handleMoveMultiple = useCallback((empIds: string[], toDeptId: string) => {
-    setDepartments((prev) => {
-      const empSet = new Set(empIds);
-      const collected: Employee[] = [];
-      const removeFromAll = (depts: Department[]): Department[] => {
-        return depts.map((dept) => {
-          const kept: Employee[] = [];
-          for (const e of dept.employees) {
-            if (empSet.has(e.id)) collected.push(e);
-            else kept.push(e);
-          }
-          const children = dept.children.length > 0 ? removeFromAll(dept.children) : dept.children;
-          return { ...dept, employees: kept, children };
-        });
-      };
-      let newDepts = removeFromAll(prev);
-      const addAll = (depts: Department[]): Department[] => {
-        return depts.map((dept) => {
-          if (dept.id === toDeptId) return { ...dept, employees: [...dept.employees, ...collected] };
-          if (dept.children.length > 0) return { ...dept, children: addAll(dept.children) };
-          return dept;
-        });
-      };
-      newDepts = addAll(newDepts);
-      return newDepts;
-    });
+    setDepartments((prev) => moveEmployeesBetween(prev, empIds, toDeptId));
   }, [setDepartments]);
 
   /** 搜索结果跳转：展开命中祖先链 + 滚动定位到实体 */
@@ -290,6 +277,17 @@ export default function App() {
       el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
     }, 80);
   }, [setDepartments]);
+
+  // 搜索弹窗关闭 / 清空高亮：用稳定回调（useCallback），避免引用变化导致 SearchModal
+  // 的 effect 反复重置 query，从而清空用户已输入的中文关键词。
+  const handleSearchClose = useCallback(() => {
+    setSearchOpen(false);
+    setSearchHighlight(EMPTY_HIGHLIGHT);
+  }, []);
+
+  const handleSearchClearHighlight = useCallback(() => {
+    setSearchHighlight(EMPTY_HIGHLIGHT);
+  }, []);
 
   /** 载入内置行业模板（v2.0.3 P1-4） */
   const handleLoadIndustryTemplate = useCallback(
@@ -419,8 +417,8 @@ export default function App() {
     }
   }, [departments, showToast]);
 
-  // 缩放：按钮 + 画布滚轮共用同一增量逻辑（50-200 边界钳制）
-  const clampZoom = useCallback((z: number) => Math.min(Math.max(z, 50), 200), []);
+  // 缩放：按钮 + 画布滚轮共用同一增量逻辑（50-200 边界钳制，取整避免浮点误差如 99.9999%）
+  const clampZoom = useCallback((z: number) => Math.min(Math.max(Math.round(z), 50), 200), []);
   const handleZoomChange = useCallback((next: number) => setZoom(clampZoom(next)), [clampZoom, setZoom]);
   const handleZoomIn = useCallback(() => setZoom((z) => clampZoom(z + 10)), [clampZoom, setZoom]);
   const handleZoomOut = useCallback(() => setZoom((z) => clampZoom(z - 10)), [clampZoom, setZoom]);
@@ -620,8 +618,6 @@ export default function App() {
           onOrgTemplateUpload={handleOrgTemplateUpload}
           onExportPng={handleExportPng}
           onExportExcel={handleExportExcel}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
           onReset={handleReset}
           onLoadTestData={handleLoadTestData}
           onCreateDepartment={handleCreateDepartment}
@@ -629,8 +625,9 @@ export default function App() {
           onOpenReport={handleOpenReport}
           onExportProject={handleExportProject}
           departments={departments}
-          zoom={zoom}
           hasData={departments.length > 0}
+          hasEmployees={allEmployeesFlat.length > 0}
+          hasOrgTemplate={orgTemplates.length > 0}
         />
 
         <main
@@ -709,13 +706,10 @@ export default function App() {
 
       <SearchModal
         open={searchOpen}
-        onClose={() => {
-          setSearchOpen(false);
-          setSearchHighlight(EMPTY_HIGHLIGHT);
-        }}
+        onClose={handleSearchClose}
         departments={departments}
         onHighlight={setSearchHighlight}
-        onClearHighlight={() => setSearchHighlight(EMPTY_HIGHLIGHT)}
+        onClearHighlight={handleSearchClearHighlight}
         onJump={handleSearchJump}
       />
 

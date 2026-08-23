@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
+import { Plus, Minus } from 'lucide-react';
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
@@ -54,68 +55,141 @@ function flattenDepts(depts: Department[]): { id: string; name: string; level: n
   return out;
 }
 
-function calculateTreeLayout(
+/**
+ * 计算一个部门的"叶子数"（用于分配子树宽度带）：
+ * - 无子部门 或 未展开（折叠）→ 1（它自身仍渲染为一张卡片）
+ * - 否则 → 递归累加每个子部门的叶子数。
+ * 注意：折叠的子部门要计为 1（它仍占一个卡位的宽度），不能用 filter(expanded) 排除，
+ * 否则那部分宽度会丢失、与相邻部门重叠。
+ */
+export function countLeaves(dept: Department): number {
+  if (dept.children.length === 0 || !dept.expanded) return 1;
+  return dept.children.reduce((sum, c) => sum + (c.expanded ? countLeaves(c) : 1), 0);
+}
+
+/**
+ * 方案 A：真正使用坐标做绝对定位的树布局。
+ *
+ * 每个部门占据一个「子树宽度带」= countLeaves(dept) * 卡宽 + (叶子数-1) * 水平间距。
+ * 节点自身卡片居中放在其子树带中点，子部门在同一带内从左到右依次排布。
+ * 这样保证：父部门水平居中于其子部门上方（经典组织树），层级间距一致。
+ *
+ * 关键：水平间距必须全局统一（父带宽与子部门排布用同一间距），否则父卡无法正好
+ * 居中在子部门块上、且各层左右间距不一致 → 视觉杂乱。垂直步进也固定。
+ *
+ * 坐标以 100% 缩放基准计算（卡宽=220、层级步进=240），实际缩放由外层 transform:scale 完成。
+ */
+export function calculateTreeLayout(
   departments: Department[],
   parentX: number,
   parentY: number,
   zoom: number,
-  _level: number = 0
 ): TreeNode[] {
   if (departments.length === 0) return [];
-  
+
   const cardWidth = 220 * (zoom / 100);
-  // 根级别部门间距更大
-  const horizontalGap = _level === 0 ? 120 * (zoom / 100) : 60 * (zoom / 100);
+  const horizontalGap = 80 * (zoom / 100); // 全局统一水平间距（跨层级一致）
   const verticalGap = 40 * (zoom / 100);
-  
-  // 计算每个子树的宽度
-  const calculateSubtreeWidth = (depts: Department[]): number => {
-    if (depts.length === 0) return 0;
-    let totalWidth = 0;
-    const leafCounts: number[] = [];
-    
-    depts.forEach(dept => {
-      if (dept.children.length === 0 || !dept.expanded) {
-        leafCounts.push(1);
-      } else {
-        leafCounts.push(calculateSubtreeWidth(dept.children.filter(d => d.expanded)));
-      }
-    });
-    
-    leafCounts.forEach((count) => {
-      totalWidth += count * cardWidth + (count - 1) * horizontalGap;
-    });
-    
-    return totalWidth;
+  const levelStep = 200 * (zoom / 100) + verticalGap; // 固定垂直步进（200 卡高 + 40 间距）
+
+  // 一个部门子树占用的水平宽度带（像素）
+  const bandWidth = (dept: Department): number => {
+    const leaves = countLeaves(dept);
+    return leaves * cardWidth + (leaves - 1) * horizontalGap;
   };
-  
-  const results: TreeNode[] = [];
-  let currentX = parentX;
-  
-  departments.forEach((dept) => {
-    let subtreeWidth: number;
-    let children: TreeNode[] = [];
-    
-    if (dept.children.length > 0 && dept.expanded) {
-      const visibleChildren = dept.children;
-      subtreeWidth = calculateSubtreeWidth(visibleChildren);
-      children = calculateTreeLayout(visibleChildren, currentX + subtreeWidth / 2 - cardWidth / 2, parentY + 200 * (zoom / 100) + verticalGap, zoom, _level + 1);
-    } else {
-      subtreeWidth = cardWidth;
+
+  // 在同一 Y 上从左到右摆放一组兄弟部门；返回节点数组（含已递归摆好的子部门）。
+  const layoutRow = (depts: Department[], leftX: number, y: number): TreeNode[] => {
+    const nodes: TreeNode[] = [];
+    let cursor = leftX;
+    for (const dept of depts) {
+      const band = bandWidth(dept);
+      const isExpandedParent = dept.children.length > 0 && dept.expanded;
+
+      let children: TreeNode[] = [];
+      if (isExpandedParent) {
+        // 子部门占用父部门的整个宽度带，从带的左缘开始排布 → 父卡片中心恰好落在子部门块中点
+        children = layoutRow(dept.children, cursor, y + levelStep);
+      }
+
+      const cardCenterX = cursor + band / 2;
+      const nodeX = cardCenterX - cardWidth / 2;
+
+      nodes.push({
+        department: dept,
+        x: nodeX,
+        y,
+        width: band,
+        children,
+      });
+
+      cursor += band + horizontalGap; // 兄弟间留固定间距
     }
-    
-    results.push({
-      department: dept,
-      x: currentX,
-      y: parentY,
-      width: subtreeWidth,
-      children,
-    });
-    
-    currentX += subtreeWidth + horizontalGap;
-  });
-  
-  return results;
+    return nodes;
+  };
+
+  return layoutRow(departments, parentX, parentY);
+}
+
+/**
+ * 生成父→子连接线（引导线）的 SVG 路径。
+ * 经典组织树走线：父卡底部中点 → 垂直降到水平总线 → 水平延伸到每个子卡中点 → 垂直降到子卡顶部。
+ * 坐标为 100% 缩放基准（与卡片坐标一致），实际缩放由外层 transform:scale 完成。
+ */
+function computeConnectors(
+  nodes: TreeNode[],
+  cardWidth: number,
+  cardHeight: number,
+): string[] {
+  const paths: string[] = [];
+  const walk = (list: TreeNode[]) => {
+    for (const n of list) {
+      if (n.children.length > 0) {
+        const parentCx = n.x + cardWidth / 2;
+        const parentBottom = n.y + cardHeight;
+        const firstChild = n.children[0];
+        const lastChild = n.children[n.children.length - 1];
+        const busY = parentBottom + (firstChild.y - parentBottom) / 2; // 父底与子顶的中点
+
+        const firstCx = firstChild.x + cardWidth / 2;
+        const lastCx = lastChild.x + cardWidth / 2;
+
+        // 主干：父底 → 总线高度（垂直）
+        paths.push(`M ${parentCx} ${parentBottom} L ${parentCx} ${busY}`);
+        // 总线：从第一个子卡中线到最后一个子卡中线（水平）
+        paths.push(`M ${firstCx} ${busY} L ${lastCx} ${busY}`);
+        // 每个子卡：总线高度 → 子卡顶（垂直）
+        for (const c of n.children) {
+          const cx = c.x + cardWidth / 2;
+          paths.push(`M ${cx} ${busY} L ${cx} ${c.y}`);
+        }
+      }
+      walk(n.children);
+    }
+  };
+  walk(nodes);
+  return paths;
+}
+
+/** 卡片基础尺寸（与 calculateTreeLayout 的 200px 层级步进一致） */
+const CARD_WIDTH = 220;
+const CARD_HEIGHT = 200;
+
+/**
+ * 绝对定位渲染组织树（方案 A）：所有部门卡片平铺在 canvasRef 直接子级，
+ * 用 calculateTreeLayout 算出的全局 x/y 坐标定位。
+ * 注意：不能把子部门嵌套在父部门 div 内（position:absolute 会相对父部门而非 canvasRef）。
+ */
+function flattenTreeNodes(nodes: TreeNode[]): TreeNode[] {
+  const out: TreeNode[] = [];
+  const walk = (list: TreeNode[]) => {
+    for (const n of list) {
+      out.push(n);
+      walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
 }
 
 const renderTreeRecursive = (
@@ -129,14 +203,19 @@ const renderTreeRecursive = (
   allEmployees: Employee[],
   selectedEmpIds: Set<string>,
   onToggleSelectEmp: (empId: string, additive: boolean) => void,
-  level: number = 0
 ): React.ReactNode => {
-  if (nodes.length === 0) return null;
-  
+  // 扁平化所有节点，全部相对 canvasRef 绝对定位（全局坐标）
+  const flat = flattenTreeNodes(nodes);
+  if (flat.length === 0) return null;
+
   return (
-    <div className="flex items-start gap-0">
-      {nodes.map((node) => (
-        <div key={node.department.id} className="flex flex-col items-center">
+    <>
+      {flat.map((node) => (
+        <div
+          key={node.department.id}
+          className="absolute"
+          style={{ left: node.x, top: node.y, width: CARD_WIDTH }}
+        >
           <DepartmentCard
             department={node.department}
             onToggleExpand={onToggleExpand}
@@ -149,28 +228,24 @@ const renderTreeRecursive = (
             selectedEmpIds={selectedEmpIds}
             onToggleSelectEmp={onToggleSelectEmp}
           />
-          {node.department.expanded && node.children.length > 0 && (
-            <div className="mt-4 pl-8 border-l-2 border-indigo-200 ml-4">
-              {renderTreeRecursive(
-                node.children,
-                onToggleExpand,
-                onUpdateDepartment,
-                onUpdateLeader,
-                onDeleteEmployee,
-                onCreateVirtualEmployee,
-                onChangeDepartmentLevel,
-                allEmployees,
-                selectedEmpIds,
-                onToggleSelectEmp,
-                level + 1
-              )}
-            </div>
-          )}
         </div>
       ))}
-    </div>
+    </>
   );
 };
+
+/** 计算布局总高度：所有节点的最大 y + 卡片高度（缩放前基准） */
+function computeLayoutHeight(nodes: TreeNode[]): number {
+  let maxY = 0;
+  const walk = (list: TreeNode[]) => {
+    for (const n of list) {
+      maxY = Math.max(maxY, n.y);
+      walk(n.children);
+    }
+  };
+  walk(nodes);
+  return maxY + CARD_HEIGHT;
+}
 
 /** 空状态 Hero（初次使用引导）：三步引导 + CTA */
 function EmptyStateHero({ onDownloadTemplate, onLoadTestData, onLoadIndustryTemplate }: {
@@ -257,7 +332,6 @@ export function OrgChart({
   searchHighlight,
 }: OrgChartProps) {
   const [containerWidth, setContainerWidth] = useState(0);
-  const [contentHeight, setContentHeight] = useState(0);
   const [dragData, setDragData] = useState<{ type: 'employee' | 'department'; data: Employee | Department } | null>(null);
   const [zoomHint, setZoomHint] = useState<number | null>(null);
   const isDraggingRef = useRef(false);
@@ -276,10 +350,16 @@ export function OrgChart({
 
   const selectedSet = useMemo(() => new Set(selectedEmpIds), [selectedEmpIds]);
 
-  // 画布区滚轮缩放：以光标为中心（Figma/白板画布直觉）。
-  // 触控板/鼠标会产生高频小幅 delta，因此做「增量累积 + 阈值」衰减，
-  // 避免轻微一滚就跳几十个百分点；累积超过阈值（±120px）才触发一次缩放。
-  // 需 non-passive 监听并 preventDefault：Ctrl/Cmd+滚轮会触发浏览器页面缩放，必须拦截。
+  // —— 空白区拖拽平移画布（按住向上下左右拖改变视口位置）——
+  const dragPanRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+
+  // 画布区滚轮/触控板：
+  //   触控板「双指捏合放大/缩小」在浏览器中会触发 ctrlKey=true 的 wheel 事件（或 metaKey，mac Cmd），
+  //   因此只有 ctrl/meta + wheel 才做缩放。
+  //   触控板「双指上下左右滑动」= 普通 wheel（ctrlKey=false），默认行为就是平移视口（滚动容器），
+  //   这里直接放行、不 preventDefault，让浏览器原生滚动完成上下/左右平移（对应 bug 2）。
+  //   缩放做「增量累积 + 阈值」衰减，避免轻微一滚就跳几十个百分点。
   const wheelAccumRef = useRef(0);
   useEffect(() => {
     const el = zoomContainerRef.current;
@@ -289,20 +369,15 @@ export function OrgChart({
       // 拖拽中抑制缩放，避免误触
       if (isDraggingRef.current) return;
 
-      // Shift + 滚轮 → 横向平移
-      if (e.shiftKey) {
-        e.preventDefault();
-        el.scrollLeft += e.deltaY;
-        return;
-      }
+      // 只有「捏合/Ctrl+滚轮」才是缩放；其余（双指滑动、普通滚轮）= 平移，放行给浏览器原生滚动
+      if (!(e.ctrlKey || e.metaKey)) return;
 
-      // 累积增量；阈值越大缩放越"钝"，触控板手感越稳。取 120px 约等于一次标准滚轮。
+      // 到浏览器缩放边界（如系统级 100%）时放行默认，避免卡死
       const { accumulated, steps } = accumZoomWheel(wheelAccumRef.current, e.deltaY);
       wheelAccumRef.current = accumulated;
       if (steps === 0) return;
 
       const newZoom = applyZoomSteps(zoom, steps);
-      // 已到边界（如 50/200）：放行默认滚动，避免手感卡死
       if (newZoom === zoom) return;
 
       const scaleOld = zoom / 100;
@@ -335,7 +410,8 @@ export function OrgChart({
     })
   );
 
-  // —— 框选：空白区拖拽出选择框（与 @dnd-kit 单拖拽隔离）——
+  // —— 框选：Shift+空白区拖拽出选择框（与 @dnd-kit 单拖拽隔离）。
+  //    普通空白区拖拽 → 平移画布（见 dragPanRef 相关 handler）——
   const handleFramePointerMove = useCallback((e: PointerEvent) => {
     if (!frameStart.current) return;
     const sx = frameStart.current.x;
@@ -390,16 +466,49 @@ export function OrgChart({
     setSelectedEmpIds(hits);
   }, [handleFramePointerMove, canvasRef]);
 
+  // —— 空白区拖拽平移画布 ——
+  const handlePanPointerMove = useCallback((e: PointerEvent) => {
+    const pan = dragPanRef.current;
+    const el = zoomContainerRef.current;
+    if (!pan || !el) return;
+    const dx = e.clientX - pan.startX;
+    const dy = e.clientY - pan.startY;
+    el.scrollLeft = pan.scrollLeft - dx;
+    el.scrollTop = pan.scrollTop - dy;
+  }, [zoomContainerRef]);
+
+  const handlePanPointerEnd = useCallback(() => {
+    window.removeEventListener('pointermove', handlePanPointerMove);
+    window.removeEventListener('pointerup', handlePanPointerEnd);
+    dragPanRef.current = null;
+    setIsPanning(false);
+  }, [handlePanPointerMove]);
+
   const handleFramePointerDown = (e: React.PointerEvent) => {
     if (departments.length === 0) return;
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    // 点/拖到卡片或员工上 → 交给 dnd / 点击选中，不启动框选
+    // 点/拖到卡片或员工上 → 交给 dnd / 点击选中，不启动框选或画布平移
     if (target.closest('[data-dept-id]') || target.closest('[data-emp-id]')) return;
-    frameStart.current = { x: e.clientX, y: e.clientY };
-    setFrameRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 });
-    window.addEventListener('pointermove', handleFramePointerMove);
-    window.addEventListener('pointerup', handleFramePointerUp);
+    const el = zoomContainerRef.current;
+
+    // Shift + 空白拖拽 → 框选（多选员工）；否则 → 平移画布（bug 3）
+    if (e.shiftKey) {
+      frameStart.current = { x: e.clientX, y: e.clientY };
+      setFrameRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 });
+      window.addEventListener('pointermove', handleFramePointerMove);
+      window.addEventListener('pointerup', handleFramePointerUp);
+    } else if (el) {
+      dragPanRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+      };
+      setIsPanning(true);
+      window.addEventListener('pointermove', handlePanPointerMove);
+      window.addEventListener('pointerup', handlePanPointerEnd);
+    }
   };
 
   const handleToggleSelectEmp = useCallback((empId: string, additive: boolean) => {
@@ -416,22 +525,45 @@ export function OrgChart({
     return () => {
       window.removeEventListener('pointermove', handleFramePointerMove);
       window.removeEventListener('pointerup', handleFramePointerUp);
+      window.removeEventListener('pointermove', handlePanPointerMove);
+      window.removeEventListener('pointerup', handlePanPointerEnd);
     };
-  }, [handleFramePointerMove, handleFramePointerUp]);
+  }, [handleFramePointerMove, handleFramePointerUp, handlePanPointerMove, handlePanPointerEnd]);
   
-  // 测量未缩放内容的实际宽高（transform scale 不影响 scrollWidth/scrollHeight）
+  // 测量未缩放内容宽度（供 totalWidth 兜底；高度由 calculateTreeLayout 计算，不再依赖 scrollHeight）
   useEffect(() => {
-    const updateSize = () => {
+    const updateWidth = () => {
       if (canvasRef.current) {
         setContainerWidth(canvasRef.current.scrollWidth);
-        setContentHeight(canvasRef.current.scrollHeight);
       }
     };
     
-    updateSize();
-    window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
   }, [departments, zoom, canvasRef]);
+  
+  // 首次加载数据后，滚动到树中心，让组织架构显示在视觉中央（而非左上角）
+  const hadDataRef = useRef(false);
+  useEffect(() => {
+    if (departments.length === 0) { hadDataRef.current = false; return; }
+    const firstLoad = !hadDataRef.current;
+    hadDataRef.current = true;
+    if (firstLoad) {
+      // 等布局渲染后滚动到中心（树中心 = canvas 宽度一半 * scale - 视口一半）
+      requestAnimationFrame(() => {
+        const el = zoomContainerRef.current;
+        const canvas = canvasRef.current;
+        if (el && canvas) {
+          const scale = zoom / 100;
+          const targetLeft = (canvas.offsetWidth * scale - el.clientWidth) / 2;
+          const targetTop = (canvas.offsetHeight * scale - el.clientHeight) / 2;
+          el.scrollLeft = Math.max(0, targetLeft);
+          el.scrollTop = Math.max(0, targetTop);
+        }
+      });
+    }
+  }, [departments, zoom, zoomContainerRef, canvasRef]);
   
   const handleDragStart = (event: DragStartEvent) => {
     isDraggingRef.current = true;
@@ -534,12 +666,24 @@ export function OrgChart({
   
   // 布局按 100% 基准计算，缩放由外层 transform: scale 完成
   const scale = zoom / 100;
+  const clampZoom = useCallback((z: number) => Math.min(Math.max(Math.round(z), 50), 200), []);
   const treeNodes = calculateTreeLayout(departments, 0, 0, 100);
-  
-  const totalWidth = Math.max(
-    containerWidth,
-    treeNodes.reduce((sum, node) => sum + node.width, 0) + (treeNodes.length - 1) * 40
-  );
+  // 方案 A：布局宽度/高度都由坐标树计算（与绝对定位坐标一致，而非累加根 width）
+  const layoutHeight = computeLayoutHeight(treeNodes);
+  // 遍历所有节点取 max(x + width)，确保 wrapper 包住最右的部门（含子部门）
+  const layoutWidth = (() => {
+    let maxRight = 0;
+    const walk = (list: TreeNode[]) => {
+      for (const n of list) {
+        maxRight = Math.max(maxRight, n.x + n.width);
+        walk(n.children);
+      }
+    };
+    walk(treeNodes);
+    return maxRight;
+  })();
+  const totalWidth = Math.max(containerWidth, layoutWidth);
+  const canvasWidth = Math.max(totalWidth + 64, 100); // +padding p-8 (32*2)
   
   return (
     <DndContext
@@ -553,37 +697,62 @@ export function OrgChart({
         onPointerDown={handleFramePointerDown}
         className="min-h-full relative"
         style={{
-          width: departments.length > 0 ? totalWidth * scale : '100%',
-          minHeight: departments.length > 0 ? contentHeight * scale : '100%',
-          cursor: 'default',
+          width: departments.length > 0 ? canvasWidth * scale : '100%',
+          minHeight: departments.length > 0 ? (layoutHeight + 64) * scale : '100%',
+          cursor: isPanning ? 'grabbing' : 'default',
         }}
-        title="滚轮缩放（50-200%）"
+        title="捏合/Ctrl+滚轮缩放 · 双指滑动或拖拽空白区平移"
       >
         <SearchHighlightContext.Provider value={searchHighlight ?? EMPTY_HIGHLIGHT}>
         {departments.length > 0 ? (
           <div
             ref={canvasRef}
-            className="min-h-full p-8"
-            style={{ 
-              minWidth: totalWidth,
+            className="p-8 relative"
+            style={{
+              width: canvasWidth,
+              height: layoutHeight + 64,
               transform: `scale(${scale})`,
-              transformOrigin: 'top left'
+              transformOrigin: 'top left',
             }}
           >
-            <div className="flex flex-col items-center">
-              {renderTreeRecursive(
-                treeNodes,
-                onToggleExpand,
-                onUpdateDepartment,
-                onUpdateLeader,
-                onDeleteEmployee,
-                onCreateVirtualEmployee,
-                onChangeDepartmentLevel,
-                allEmployees,
-                selectedSet,
-                handleToggleSelectEmp
-              )}
-            </div>
+            {/* 引导线层：父→子连接线，绝对定位铺满画布，位于卡片下方（先渲染） */}
+            {(() => {
+              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH, CARD_HEIGHT);
+              if (connectorPaths.length === 0) return null;
+              return (
+                <svg
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ left: 0, top: 0 }}
+                  width={layoutWidth}
+                  height={layoutHeight}
+                  viewBox={`0 0 ${layoutWidth} ${layoutHeight}`}
+                >
+                  {connectorPaths.map((d, i) => (
+                    <path
+                      key={i}
+                      d={d}
+                      fill="none"
+                      stroke="#CBD5E1"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ))}
+                </svg>
+              );
+            })()}
+            {renderTreeRecursive(
+              treeNodes,
+              onToggleExpand,
+              onUpdateDepartment,
+              onUpdateLeader,
+              onDeleteEmployee,
+              onCreateVirtualEmployee,
+              onChangeDepartmentLevel,
+              allEmployees,
+              selectedSet,
+              handleToggleSelectEmp
+            )}
           </div>
         ) : (
           /* 空状态：铺满画布视口（不套 transform:scale），始终固定居中，
@@ -607,6 +776,31 @@ export function OrgChart({
             {zoomHint}%
           </div>
         )}
+
+        {/* 画布右下角浮动缩放控件（放大 / 百分比 / 缩小） */}
+        <div className="absolute bottom-3 right-3 z-[65] flex items-center gap-1 px-1.5 py-1 rounded-full bg-white/90 backdrop-blur border border-slate-200 shadow-md">
+          <button
+            onClick={() => onZoomChange(clampZoom(zoom - 10))}
+            disabled={zoom <= 50}
+            aria-label="缩小"
+            title="缩小"
+            className="w-7 h-7 grid place-items-center rounded-full text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+          <span className="min-w-[44px] text-center text-xs font-semibold text-slate-700 tabular-nums">
+            {Math.round(zoom)}%
+          </span>
+          <button
+            onClick={() => onZoomChange(clampZoom(zoom + 10))}
+            disabled={zoom >= 200}
+            aria-label="放大"
+            title="放大"
+            className="w-7 h-7 grid place-items-center rounded-full text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
 
         {/* 框选选择框（viewport 坐标，fixed 定位） */}
         {frameRect && frameRect.w > 0 && (

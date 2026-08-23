@@ -173,7 +173,7 @@ function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario
   const canvas: ScenarioCanvas = {
     zoom:
       typeof canvasRaw.zoom === 'number' && Number.isFinite(canvasRaw.zoom)
-        ? Math.min(Math.max(canvasRaw.zoom, 50), 200)
+        ? Math.round(Math.min(Math.max(canvasRaw.zoom, 50), 200))
         : 100,
     lastFocusedDeptId: typeof canvasRaw.lastFocusedDeptId === 'string' ? canvasRaw.lastFocusedDeptId : undefined,
   };
