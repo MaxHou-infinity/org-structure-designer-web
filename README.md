@@ -159,4 +159,6 @@ npm run tauri:build    # 构建安装包（.dmg /.exe /.AppImage 等）
 
 ---
 
-> **命名说明**：项目当前以「组织罗盘 OrgCompass」作为推荐名。若你希望正式改名为其它候选（见上），并同步更新仓库名 / `package.json` name / Tauri `productName` / `identifier`，请确认后我再执行完整改名（改仓库名会有链接重定向）。
+> **品牌**：项目已升级为 **组织罗盘 OrgCompass**（仓库名 `orgcompass`，`package.json` / Tauri `productName`+`identifier` / 界面品牌均已同步）。
+>
+> **版本兼容说明**：仓库改名与品牌升级前的安装包（v2.0.4）仍以旧名 `OrgStructureDesigner_*` 发布；**自 v2.0.5 起**，新建安装包将统一为 `OrgCompass_*` 命名。
