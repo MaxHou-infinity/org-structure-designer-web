@@ -1,10 +1,18 @@
-import { useMemo } from 'react';
-import { X, RefreshCw, Activity, Download, Building2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { X, RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal } from 'lucide-react';
 import { Department, LevelConfig } from '../types';
 import {
   computeHealthReport,
   HEALTH_STATUS_LABEL,
   HealthStatus,
+  HealthThresholds,
+  HealthSuggestion,
+  SuggestionSeverity,
+  collectAllSuggestions,
+  getHealthThresholds,
+  setHealthThresholds,
+  resetHealthThresholds,
+  DEFAULT_HEALTH_THRESHOLDS,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
@@ -20,6 +28,21 @@ interface HealthDrawerProps {
   onExportReport: () => void;
   currentScenarioName: string;
 }
+
+/** 建议严重级 → 视觉类 */
+const SEVERITY_STYLE: Record<SuggestionSeverity, { dot: string; text: string; badge: string }> = {
+  critical: { dot: 'bg-red-500', text: 'text-red-600', badge: 'bg-red-50 text-red-600' },
+  major: { dot: 'bg-amber-500', text: 'text-amber-600', badge: 'bg-amber-50 text-amber-600' },
+  minor: { dot: 'bg-emerald-500', text: 'text-emerald-600', badge: 'bg-emerald-50 text-emerald-600' },
+  info: { dot: 'bg-slate-400', text: 'text-slate-500', badge: 'bg-slate-100 text-slate-500' },
+};
+
+const SEVERITY_LABEL: Record<SuggestionSeverity, string> = {
+  critical: '重点',
+  major: '建议',
+  minor: '提示',
+  info: '信息',
+};
 
 function StatusDot({ status, label }: { status: HealthStatus; label?: string }) {
   const s = STATUS_STYLE[status];
@@ -61,6 +84,50 @@ function LevelDistributionBar({
   );
 }
 
+function ThresholdInput({ label, value, onChange, suffix = '' }: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  suffix?: string;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3">
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className="flex items-center gap-1">
+        <input
+          type="number"
+          min="0"
+          value={value}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (Number.isFinite(v)) onChange(v);
+          }}
+          className="w-16 px-2 py-1 rounded-md border border-slate-200 text-right text-sm focus-ring"
+        />
+        {suffix && <span className="text-xs text-slate-400">{suffix}</span>}
+      </span>
+    </label>
+  );
+}
+
+function SuggestionItem({ s }: { s: HealthSuggestion }) {
+  const st = SEVERITY_STYLE[s.severity];
+  return (
+    <div className="flex items-start gap-3 rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-3.5">
+      <span className={`w-6 h-6 rounded-full grid place-items-center text-[10px] font-bold shrink-0 mt-0.5 ${st.badge}`}>
+        {SEVERITY_LABEL[s.severity]}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+          {s.deptName && <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+          {s.title}
+        </div>
+        <div className="text-xs text-slate-500 mt-1 leading-snug">{s.detail}</div>
+      </div>
+    </div>
+  );
+}
+
 export function HealthDrawer({
   open,
   onClose,
@@ -73,12 +140,32 @@ export function HealthDrawer({
   currentScenarioName,
 }: HealthDrawerProps) {
   const configs = useLevelConfigs();
+  const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
+  const [thresholdsOpen, setThresholdsOpen] = useState(false);
   const report = useMemo(
-    () => computeHealthReport(departments, configs, focusDeptId),
-    [departments, configs, focusDeptId],
+    () => computeHealthReport(departments, configs, focusDeptId, thresholds),
+    [departments, configs, focusDeptId, thresholds],
+  );
+  const suggestions = useMemo(
+    () => collectAllSuggestions(report, departments, thresholds),
+    [report, departments, thresholds],
   );
 
   if (!open) return null;
+
+  const updateThresholds = (patch: Partial<HealthThresholds>) => {
+    setThresholds((prev) => {
+      const next = { ...prev, ...patch };
+      setHealthThresholds(next);
+      return next;
+    });
+  };
+
+  const resetThresholds = () => {
+    const defs = { ...DEFAULT_HEALTH_THRESHOLDS };
+    setThresholds(defs);
+    resetHealthThresholds();
+  };
 
   const focusedName = focusDeptId
     ? report.l1[0]?.name ?? '部门'
@@ -183,7 +270,16 @@ export function HealthDrawer({
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
                 L2 健康度指标
               </h3>
-              <span className="text-[10px] text-slate-400">默认阈值，可在后续版本调优</span>
+              <button
+                onClick={() => setThresholdsOpen((v) => !v)}
+                className={`flex items-center gap-1 text-[10px] font-medium transition-colors ${
+                  thresholdsOpen ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                <SlidersHorizontal className="w-3 h-3" />
+                阈值设置
+                <span className="ml-0.5">{thresholdsOpen ? '▲' : '▼'}</span>
+              </button>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {report.l2.map((m) => (
@@ -203,6 +299,30 @@ export function HealthDrawer({
               ))}
             </div>
 
+            {thresholdsOpen && (
+              <div className="mt-3 rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-600">阈值配置（存 localStorage）</span>
+                  <button
+                    onClick={resetThresholds}
+                    className="text-[10px] text-slate-400 hover:text-red-500 transition-colors font-medium"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+                <ThresholdInput label="管理幅度健康下限" value={thresholds.spanHealthyMin} onChange={(v) => updateThresholds({ spanHealthyMin: v })} />
+                <ThresholdInput label="管理幅度健康上限" value={thresholds.spanHealthyMax} onChange={(v) => updateThresholds({ spanHealthyMax: v })} />
+                <ThresholdInput label="管理幅度关注上限" value={thresholds.spanWarnMax} onChange={(v) => updateThresholds({ spanWarnMax: v })} />
+                <ThresholdInput label="层级深度健康上限（层）" value={thresholds.depthHealthyMax} onChange={(v) => updateThresholds({ depthHealthyMax: v })} />
+                <ThresholdInput label="层级深度关注上限（层）" value={thresholds.depthWarnMax} onChange={(v) => updateThresholds({ depthWarnMax: v })} />
+                <ThresholdInput label="管理者比健康上限（%）" value={thresholds.managerHealthyMax} onChange={(v) => updateThresholds({ managerHealthyMax: v })} />
+                <ThresholdInput label="管理者比关注上限（%）" value={thresholds.managerWarnMax} onChange={(v) => updateThresholds({ managerWarnMax: v })} />
+                <ThresholdInput label="空岗率健康上限（%）" value={thresholds.vacancyHealthyMax} onChange={(v) => updateThresholds({ vacancyHealthyMax: v })} />
+                <ThresholdInput label="空岗率关注上限（%）" value={thresholds.vacancyWarnMax} onChange={(v) => updateThresholds({ vacancyWarnMax: v })} />
+                <ThresholdInput label="超编预警占比" value={Math.round(thresholds.overWarnRatio * 100)} suffix="%" onChange={(v) => updateThresholds({ overWarnRatio: v / 100 })} />
+              </div>
+            )}
+
             {/* 判读汇总 */}
             <div className="mt-3 rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4">
               <div className="flex items-center justify-between">
@@ -217,6 +337,28 @@ export function HealthDrawer({
               </div>
               <p className="text-sm text-slate-700 mt-2">{report.summary.diagnosis}</p>
             </div>
+          </section>
+
+          {/* 组织优化建议 */}
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                组织优化建议
+              </h3>
+              <span className="text-[10px] text-slate-400">基于健康度自动生成 · {suggestions.length} 条</span>
+            </div>
+            {suggestions.length === 0 ? (
+              <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 text-sm text-slate-400 text-center">
+                暂无优化建议，组织结构较为健康。
+              </div>
+            ) : (
+              <div className="space-y-2.5 max-h-[42vh] overflow-y-auto pr-1">
+                {suggestions.slice(0, 30).map((s) => (
+                  <SuggestionItem key={s.id} s={s} />
+                ))}
+              </div>
+            )}
           </section>
 
           {/* L3 编制 vs 实际 vs 缺口 */}

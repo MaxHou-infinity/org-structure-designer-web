@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
+import { employeeDeptMap } from '../utils/search';
+import { SearchHighlight, SearchHighlightContext } from './SearchContext';
 
 interface OrgChartProps {
   departments: Department[];
@@ -10,6 +12,7 @@ interface OrgChartProps {
   onUpdateDepartment: (id: string, name: string) => void;
   onUpdateLeader: (deptId: string, employee: Employee | null) => void;
   onMoveEmployee: (empId: string, fromDeptId: string, toDeptId: string) => void;
+  onMoveMultiple: (empIds: string[], toDeptId: string) => void;
   onMoveDepartment: (deptId: string, targetDeptId: string | null) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
@@ -21,6 +24,10 @@ interface OrgChartProps {
   onZoomChange: (nextZoom: number) => void;
   onDownloadTemplate: () => void;
   onLoadTestData: () => void;
+  /** 载入内置行业模板（空状态吸引点，可选） */
+  onLoadIndustryTemplate?: () => void;
+  /** 搜索命中高亮（可选） */
+  searchHighlight?: SearchHighlight;
 }
 
 interface TreeNode {
@@ -29,6 +36,22 @@ interface TreeNode {
   y: number;
   width: number;
   children: TreeNode[];
+}
+
+/** 无高亮时的空上下文默认值 */
+const EMPTY_HIGHLIGHT: SearchHighlight = { deptIds: new Set(), empIds: new Set() };
+
+/** 展开所有部门（供批量移动"目标部门"选择器用） */
+function flattenDepts(depts: Department[]): { id: string; name: string; level: number }[] {
+  const out: { id: string; name: string; level: number }[] = [];
+  const walk = (list: Department[]) => {
+    for (const d of list) {
+      out.push({ id: d.id, name: d.name, level: d.level });
+      walk(d.children);
+    }
+  };
+  walk(depts);
+  return out;
 }
 
 function calculateTreeLayout(
@@ -104,6 +127,8 @@ const renderTreeRecursive = (
   onCreateVirtualEmployee: (deptId: string) => void,
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void,
   allEmployees: Employee[],
+  selectedEmpIds: Set<string>,
+  onToggleSelectEmp: (empId: string, additive: boolean) => void,
   level: number = 0
 ): React.ReactNode => {
   if (nodes.length === 0) return null;
@@ -121,6 +146,8 @@ const renderTreeRecursive = (
             onCreateVirtualEmployee={onCreateVirtualEmployee}
             onChangeDepartmentLevel={onChangeDepartmentLevel}
             allEmployees={allEmployees}
+            selectedEmpIds={selectedEmpIds}
+            onToggleSelectEmp={onToggleSelectEmp}
           />
           {node.department.expanded && node.children.length > 0 && (
             <div className="mt-4 pl-8 border-l-2 border-indigo-200 ml-4">
@@ -133,6 +160,8 @@ const renderTreeRecursive = (
                 onCreateVirtualEmployee,
                 onChangeDepartmentLevel,
                 allEmployees,
+                selectedEmpIds,
+                onToggleSelectEmp,
                 level + 1
               )}
             </div>
@@ -144,9 +173,10 @@ const renderTreeRecursive = (
 };
 
 /** 空状态 Hero（初次使用引导）：三步引导 + CTA */
-function EmptyStateHero({ onDownloadTemplate, onLoadTestData }: {
+function EmptyStateHero({ onDownloadTemplate, onLoadTestData, onLoadIndustryTemplate }: {
   onDownloadTemplate: () => void;
   onLoadTestData: () => void;
+  onLoadIndustryTemplate?: () => void;
 }) {
   return (
     <div className="flex items-center justify-center min-h-full p-10">
@@ -164,9 +194,9 @@ function EmptyStateHero({ onDownloadTemplate, onLoadTestData }: {
 
         <div className="space-y-4 text-left mb-8">
           {[
-            { n: '①', title: '下载模板', desc: '去【工具模板】下载「员工信息」「组织架构」模板' },
-            { n: '②', title: '填写数据', desc: '按模板列填写员工与部门信息' },
-            { n: '③', title: '上传文件', desc: '在左侧「文件上传」上传 Excel' },
+            { n: '①', title: '导入数据', desc: '上传员工 Excel，或载入内置行业模板一键成型' },
+            { n: '②', title: '拖拽调整', desc: '拖拽 / 框选批量移动员工，滚轮缩放画布' },
+            { n: '③', title: '导出分享', desc: '导出 PNG / Excel / 诊断报告，或保存 .orgproj' },
           ].map((step) => (
             <div key={step.n} className="flex items-start gap-3">
               <span className="w-7 h-7 rounded-full bg-indigo-500 text-white text-sm font-semibold grid place-items-center shrink-0">{step.n}</span>
@@ -191,6 +221,14 @@ function EmptyStateHero({ onDownloadTemplate, onLoadTestData }: {
           >
             载入示例数据
           </button>
+          {onLoadIndustryTemplate && (
+            <button
+              onClick={onLoadIndustryTemplate}
+              className="px-5 py-2.5 rounded-xl bg-emerald-500 text-white font-medium shadow-md hover:bg-emerald-600 hover:shadow-lg transition-all"
+            >
+              载入示例模板
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -203,6 +241,7 @@ export function OrgChart({
   onUpdateDepartment,
   onUpdateLeader,
   onMoveEmployee,
+  onMoveMultiple,
   onMoveDepartment,
   onChangeDepartmentLevel,
   onDeleteEmployee,
@@ -214,6 +253,8 @@ export function OrgChart({
   onZoomChange,
   onDownloadTemplate,
   onLoadTestData,
+  onLoadIndustryTemplate,
+  searchHighlight,
 }: OrgChartProps) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
@@ -221,6 +262,19 @@ export function OrgChart({
   const [zoomHint, setZoomHint] = useState<number | null>(null);
   const isDraggingRef = useRef(false);
   const zoomHintTimer = useRef<number | null>(null);
+
+  // —— 批量选择状态（v2.0.3 P0-1）——
+  const [selectedEmpIds, setSelectedEmpIds] = useState<string[]>([]);
+  const [frameRect, setFrameRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const frameStart = useRef<{ x: number; y: number } | null>(null);
+  const selectedIdsRef = useRef<string[]>([]);
+  // 同步 selectedEmpIds 到 ref（供 dragEnd 读取）
+  useEffect(() => {
+    selectedIdsRef.current = selectedEmpIds;
+  }, [selectedEmpIds]);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const selectedSet = useMemo(() => new Set(selectedEmpIds), [selectedEmpIds]);
 
   // 画布区滚轮缩放：以光标为中心（Figma/白板画布直觉）。
   // 触控板/鼠标会产生高频小幅 delta，因此做「增量累积 + 阈值」衰减，
@@ -280,6 +334,90 @@ export function OrgChart({
       },
     })
   );
+
+  // —— 框选：空白区拖拽出选择框（与 @dnd-kit 单拖拽隔离）——
+  const handleFramePointerMove = useCallback((e: PointerEvent) => {
+    if (!frameStart.current) return;
+    const sx = frameStart.current.x;
+    const sy = frameStart.current.y;
+    setFrameRect({
+      x: Math.min(sx, e.clientX),
+      y: Math.min(sy, e.clientY),
+      w: Math.abs(e.clientX - sx),
+      h: Math.abs(e.clientY - sy),
+    });
+  }, []);
+
+  const handleFramePointerUp = useCallback((e: PointerEvent) => {
+    window.removeEventListener('pointermove', handleFramePointerMove);
+    window.removeEventListener('pointerup', handleFramePointerUp);
+    const start = frameStart.current;
+    frameStart.current = null;
+    setFrameRect(null);
+    if (!start) return;
+
+    const sx = start.x;
+    const sy = start.y;
+    const finalRect = {
+      x: Math.min(sx, e.clientX),
+      y: Math.min(sy, e.clientY),
+      w: Math.abs(e.clientX - sx),
+      h: Math.abs(e.clientY - sy),
+    };
+
+    // 极小的拖拽视为空白单击 → 非 Shift 则清空选择
+    if (finalRect.w < 4 && finalRect.h < 4) {
+      if (!e.shiftKey) setSelectedEmpIds([]);
+      return;
+    }
+
+    // 框选：收集矩形内可见员工（getBoundingClientRect 已含 transform:scale）
+    const container = wrapperRef.current ?? canvasRef.current;
+    const hits: string[] = [];
+    if (container) {
+      const els = container.querySelectorAll<HTMLElement>('[data-emp-id]');
+      els.forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const inter = !(
+          r.right < finalRect.x ||
+          r.left > finalRect.x + finalRect.w ||
+          r.bottom < finalRect.y ||
+          r.top > finalRect.y + finalRect.h
+        );
+        if (inter) hits.push(el.dataset.empId as string);
+      });
+    }
+    setSelectedEmpIds(hits);
+  }, [handleFramePointerMove, canvasRef]);
+
+  const handleFramePointerDown = (e: React.PointerEvent) => {
+    if (departments.length === 0) return;
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // 点/拖到卡片或员工上 → 交给 dnd / 点击选中，不启动框选
+    if (target.closest('[data-dept-id]') || target.closest('[data-emp-id]')) return;
+    frameStart.current = { x: e.clientX, y: e.clientY };
+    setFrameRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 });
+    window.addEventListener('pointermove', handleFramePointerMove);
+    window.addEventListener('pointerup', handleFramePointerUp);
+  };
+
+  const handleToggleSelectEmp = useCallback((empId: string, additive: boolean) => {
+    setSelectedEmpIds((prev) => {
+      if (additive) {
+        return prev.includes(empId) ? prev.filter((id) => id !== empId) : [...prev, empId];
+      }
+      // 非 Shift：单选该员工
+      return prev.length === 1 && prev[0] === empId ? prev : [empId];
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('pointermove', handleFramePointerMove);
+      window.removeEventListener('pointerup', handleFramePointerUp);
+    };
+  }, [handleFramePointerMove, handleFramePointerUp]);
   
   // 测量未缩放内容的实际宽高（transform scale 不影响 scrollWidth/scrollHeight）
   useEffect(() => {
@@ -338,28 +476,46 @@ export function OrgChart({
       return;
     }
     
-    // 处理员工拖拽
+    // 处理员工拖拽（支持批量）
     if (prevDragData?.type === 'employee') {
       const employee = prevDragData.data as Employee;
       if (!dropData || dropData.type !== 'department') return;
-      
-      // 查找员工当前所在的部门
-      let fromDeptId: string | null = null;
-      const findEmployeeDept = (depts: Department[]): string | null => {
-        for (const dept of depts) {
-          if (dept.employees.some(emp => emp.id === employee.id)) {
-            return dept.id;
+      const toDeptId = dropData.department.id;
+
+      // 若拖拽的员工在选中集且选中数>1 → 批量移动
+      const selected = selectedIdsRef.current;
+      const idsToMove = selected.length > 1 && selected.includes(employee.id) ? selected : [employee.id];
+
+      // 定位员工(们)所在部门（不一致时逐个处理）
+      const locMap = employeeDeptMap(departments, idsToMove);
+      const locatable = idsToMove.filter((id) => locMap.get(id));
+
+      if (locatable.length === 0) {
+        // 无法定位（异常），回退单拖拽逻辑
+        let fromDeptId: string | null = null;
+        const findEmployeeDept = (depts: Department[]): string | null => {
+          for (const dept of depts) {
+            if (dept.employees.some((emp) => emp.id === employee.id)) return dept.id;
+            const found = findEmployeeDept(dept.children);
+            if (found) return found;
           }
-          const found = findEmployeeDept(dept.children);
-          if (found) return found;
+          return null;
+        };
+        fromDeptId = findEmployeeDept(departments);
+        if (fromDeptId && fromDeptId !== toDeptId) onMoveEmployee(employee.id, fromDeptId, toDeptId);
+        return;
+      }
+
+      if (locatable.length > 1) {
+        onMoveMultiple(locatable, toDeptId);
+        setSelectedEmpIds([]);
+      } else if (locatable.length === 1) {
+        const only = locatable[0];
+        const fromDeptId = locMap.get(only);
+        if (fromDeptId && fromDeptId !== toDeptId) {
+          onMoveEmployee(only, fromDeptId, toDeptId);
         }
-        return null;
-      };
-      
-      fromDeptId = findEmployeeDept(departments);
-      
-      if (fromDeptId && fromDeptId !== dropData.department.id) {
-        onMoveEmployee(employee.id, fromDeptId, dropData.department.id);
+        // 单拖一个已选员工时不切多选（保留选择）
       }
     }
   };
@@ -393,6 +549,8 @@ export function OrgChart({
     >
       {/* 外层 wrapper：有数据时占位缩放后的滚动区域尺寸；空状态铺满画布视口 */}
       <div
+        ref={wrapperRef}
+        onPointerDown={handleFramePointerDown}
         className="min-h-full relative"
         style={{
           width: departments.length > 0 ? totalWidth * scale : '100%',
@@ -401,6 +559,7 @@ export function OrgChart({
         }}
         title="滚轮缩放（50-200%）"
       >
+        <SearchHighlightContext.Provider value={searchHighlight ?? EMPTY_HIGHLIGHT}>
         {departments.length > 0 ? (
           <div
             ref={canvasRef}
@@ -420,7 +579,9 @@ export function OrgChart({
                 onDeleteEmployee,
                 onCreateVirtualEmployee,
                 onChangeDepartmentLevel,
-                allEmployees
+                allEmployees,
+                selectedSet,
+                handleToggleSelectEmp
               )}
             </div>
           </div>
@@ -432,7 +593,11 @@ export function OrgChart({
             className="min-h-full w-full"
             style={{ minWidth: '100%' }}
           >
-            <EmptyStateHero onDownloadTemplate={onDownloadTemplate} onLoadTestData={onLoadTestData} />
+            <EmptyStateHero
+              onDownloadTemplate={onDownloadTemplate}
+              onLoadTestData={onLoadTestData}
+              onLoadIndustryTemplate={onLoadIndustryTemplate}
+            />
           </div>
         )}
 
@@ -442,18 +607,83 @@ export function OrgChart({
             {zoomHint}%
           </div>
         )}
+
+        {/* 框选选择框（viewport 坐标，fixed 定位） */}
+        {frameRect && frameRect.w > 0 && (
+          <div
+            className="fixed pointer-events-none z-[60] rounded-md border-2 border-indigo-400 bg-indigo-400/10"
+            style={{
+              left: frameRect.x,
+              top: frameRect.y,
+              width: frameRect.w,
+              height: frameRect.h,
+            }}
+          />
+        )}
+
+        {/* 批量选择浮动工具条（多选开启时显示） */}
+        {selectedEmpIds.length > 0 && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] flex items-center gap-2.5 px-4 py-2 rounded-full bg-slate-900/85 text-white text-sm font-medium shadow-xl backdrop-blur-sm animate-fadeInUp">
+            <span className="flex items-center gap-1.5">
+              已选 <span className="text-indigo-300 font-bold">{selectedEmpIds.length}</span> 人
+            </span>
+            <select
+              defaultValue="__none__"
+              onChange={(e) => {
+                const id = e.target.value;
+                if (id && id !== '__none__') {
+                  onMoveMultiple(selectedEmpIds, id);
+                  setSelectedEmpIds([]);
+                }
+              }}
+              title="批量移动到目标部门"
+              className="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 text-xs text-white outline-none focus-ring [&>option]:text-slate-700"
+            >
+              <option value="__none__" disabled>移动到…</option>
+              {flattenDepts(departments).map((d) => (
+                <option key={d.id} value={d.id}>
+                  {'　'.repeat(Math.min(d.level - 1, 3))}{d.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-white/60 hidden sm:inline">或拖拽到目标部门</span>
+            <button
+              onClick={() => setSelectedEmpIds([])}
+              className="ml-1 px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 text-xs transition-colors"
+            >
+              清除选择
+            </button>
+          </div>
+        )}
+        </SearchHighlightContext.Provider>
       </div>
       
       <DragOverlay>
         {dragData && dragData.type === 'employee' && (
-          <div
-            className="px-3 py-2 bg-white rounded-lg shadow-lg border border-indigo-300"
-            style={{ 
-              backgroundColor: ((dragData.data as Employee).level ? '#' + ((dragData.data as Employee).level.startsWith('L') ? 'FF' : '99') + 'FF' : '#FFFFFF') + '80'
-            }}
-          >
-            <span className="text-sm">{(dragData.data as Employee).name}</span>
-          </div>
+          (() => {
+            const emp = dragData.data as Employee;
+            const batchCount =
+              selectedIdsRef.current.includes(emp.id) && selectedIdsRef.current.length > 1
+                ? selectedIdsRef.current.length
+                : 0;
+            return batchCount > 1 ? (
+              <div className="px-4 py-3 bg-white rounded-xl shadow-xl border-2 border-indigo-400 min-w-[170px]">
+                <span className="text-sm font-bold text-indigo-600">移动 {batchCount} 名员工</span>
+                <span className="block text-xs text-slate-400 mt-1">拖到目标部门批量移动</span>
+              </div>
+            ) : (
+              <div
+                className="px-3 py-2 bg-white rounded-lg shadow-lg border border-indigo-300"
+                style={{
+                  backgroundColor:
+                    ((emp.level ? '#' + (emp.level.startsWith('L') ? 'FF' : '99') + 'FF' : '#FFFFFF') +
+                      '80'),
+                }}
+              >
+                <span className="text-sm">{emp.name}</span>
+              </div>
+            );
+          })()
         )}
         {dragData && dragData.type === 'department' && (
           <div

@@ -6,7 +6,12 @@ import { LevelManagerModal } from './components/LevelManagerModal';
 import { HealthDrawer } from './components/HealthDrawer';
 import { ProjectModal } from './components/ProjectModal';
 import { DiagnosticReport } from './components/DiagnosticReport';
+import { SearchModal } from './components/SearchModal';
+import { OnboardingOverlay } from './components/OnboardingOverlay';
+import { SearchHighlight } from './components/SearchContext';
 import { Employee, Department, OrgTemplate } from './types';
+import { expandDepartments, SearchMatch } from './utils/search';
+import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
 import {
   parseEmployeeExcel,
   parseOrgTemplateExcel,
@@ -17,6 +22,8 @@ import {
 } from './utils/excel';
 import { saveTextFile, saveFile } from './utils/tauri';
 import { useOrgWorkspace } from './utils/useOrgWorkspace';
+
+const EMPTY_HIGHLIGHT: SearchHighlight = { deptIds: new Set(), empIds: new Set() };
 
 // 测试数据
 const TEST_EMPLOYEES = [
@@ -90,8 +97,33 @@ export default function App() {
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchHighlight, setSearchHighlight] = useState<SearchHighlight>(EMPTY_HIGHLIGHT);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+
+  // 首次进入引导：localStorage 标记，默认未看过则展示（v2.0.3 P2-6）
+  useEffect(() => {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const seen = localStorage.getItem('org-designer.onboarded');
+      if (!seen) {
+        setOnboardingOpen(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const dismissOnboarding = useCallback(() => {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('org-designer.onboarded', '1');
+    } catch {
+      /* ignore */
+    }
+    setOnboardingOpen(false);
+  }, []);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -101,6 +133,12 @@ export default function App() {
   // 撤销/重做键盘：Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z（或 Ctrl+Y）重做
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // Ctrl/Cmd+F → 应用级搜索
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
@@ -213,6 +251,57 @@ export default function App() {
       return newDepts;
     });
   }, [setDepartments]);
+
+  /** 批量移动员工：从各自所在部门移除，一次性加入目标部门（历史感知，与单移动口径一致） */
+  const handleMoveMultiple = useCallback((empIds: string[], toDeptId: string) => {
+    setDepartments((prev) => {
+      const empSet = new Set(empIds);
+      const collected: Employee[] = [];
+      const removeFromAll = (depts: Department[]): Department[] => {
+        return depts.map((dept) => {
+          const kept: Employee[] = [];
+          for (const e of dept.employees) {
+            if (empSet.has(e.id)) collected.push(e);
+            else kept.push(e);
+          }
+          const children = dept.children.length > 0 ? removeFromAll(dept.children) : dept.children;
+          return { ...dept, employees: kept, children };
+        });
+      };
+      let newDepts = removeFromAll(prev);
+      const addAll = (depts: Department[]): Department[] => {
+        return depts.map((dept) => {
+          if (dept.id === toDeptId) return { ...dept, employees: [...dept.employees, ...collected] };
+          if (dept.children.length > 0) return { ...dept, children: addAll(dept.children) };
+          return dept;
+        });
+      };
+      newDepts = addAll(newDepts);
+      return newDepts;
+    });
+  }, [setDepartments]);
+
+  /** 搜索结果跳转：展开命中祖先链 + 滚动定位到实体 */
+  const handleSearchJump = useCallback((match: SearchMatch) => {
+    setDepartments((prev) => expandDepartments(prev, new Set(match.ancestry)));
+    const attr = match.type === 'department' ? 'data-dept-id' : 'data-emp-id';
+    window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(`[${attr}="${match.id}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    }, 80);
+  }, [setDepartments]);
+
+  /** 载入内置行业模板（v2.0.3 P1-4） */
+  const handleLoadIndustryTemplate = useCallback(
+    (id: string) => {
+      const tpl = findIndustryTemplate(id);
+      if (!tpl) return;
+      const built = loadIndustryTemplate(tpl);
+      setBoth(() => ({ departments: built.departments, allEmployeesFlat: built.allEmployeesFlat }));
+      showToast(`已载入「${tpl.name}」模板`);
+    },
+    [setBoth, showToast],
+  );
 
   const handleDeleteEmployee = useCallback((deptId: string, empId: string) => {
     setDepartments((prev) => {
@@ -521,6 +610,8 @@ export default function App() {
         zoom={zoom}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
+        onOpenSearch={() => setSearchOpen(true)}
+        onLoadIndustryTemplate={handleLoadIndustryTemplate}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -553,6 +644,7 @@ export default function App() {
             onUpdateDepartment={handleUpdateDepartment}
             onUpdateLeader={handleUpdateLeader}
             onMoveEmployee={handleMoveEmployee}
+            onMoveMultiple={handleMoveMultiple}
             onMoveDepartment={handleMoveDepartment}
             onChangeDepartmentLevel={handleChangeDepartmentLevel}
             onDeleteEmployee={handleDeleteEmployee}
@@ -564,6 +656,8 @@ export default function App() {
             onZoomChange={handleZoomChange}
             onDownloadTemplate={handleDownloadEmployeeTemplate}
             onLoadTestData={handleLoadTestData}
+            onLoadIndustryTemplate={() => handleLoadIndustryTemplate('internet')}
+            searchHighlight={searchHighlight}
           />
         </main>
       </div>
@@ -611,6 +705,25 @@ export default function App() {
         projectName={project.name}
         scenarioName={currentScenario?.name ?? "场景"}
         onToast={showToast}
+      />
+
+      <SearchModal
+        open={searchOpen}
+        onClose={() => {
+          setSearchOpen(false);
+          setSearchHighlight(EMPTY_HIGHLIGHT);
+        }}
+        departments={departments}
+        onHighlight={setSearchHighlight}
+        onClearHighlight={() => setSearchHighlight(EMPTY_HIGHLIGHT)}
+        onJump={handleSearchJump}
+      />
+
+      <OnboardingOverlay
+        open={onboardingOpen}
+        onClose={dismissOnboarding}
+        onDownloadTemplate={handleDownloadEmployeeTemplate}
+        onLoadTemplate={handleLoadIndustryTemplate}
       />
     </div>
   );

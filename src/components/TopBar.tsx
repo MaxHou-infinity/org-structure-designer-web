@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity } from 'lucide-react';
+import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate } from 'lucide-react';
 import { Scenario } from '../types';
 import { SaveState } from '../utils/useOrgWorkspace';
 import { ScenarioSwitcher } from './ScenarioSwitcher';
+import { INDUSTRY_TEMPLATES } from '../utils/industryTemplates';
 
 interface TopBarProps {
   projectName: string;
@@ -28,6 +29,8 @@ interface TopBarProps {
   zoom: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onOpenSearch: () => void;
+  onLoadIndustryTemplate: (id: string) => void;
 }
 
 function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastSavedAt: string | null }) {
@@ -68,14 +71,21 @@ export function TopBar({
   zoom,
   onZoomIn,
   onZoomOut,
+  onOpenSearch,
+  onLoadIndustryTemplate,
 }: TopBarProps) {
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const toolsRef = useRef<HTMLDivElement>(null);
+  const templatesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (toolsRef.current && !toolsRef.current.contains(e.target as Node)) {
         setToolsOpen(false);
+      }
+      if (templatesRef.current && !templatesRef.current.contains(e.target as Node)) {
+        setTemplatesOpen(false);
       }
     };
     document.addEventListener('click', handleClick);
@@ -93,7 +103,7 @@ export function TopBar({
           <div className="leading-tight">
             <div className="flex items-center gap-2">
               <span className="text-[15px] font-bold text-slate-900 tracking-tight">组织架构设计</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.2</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.3</span>
             </div>
             <div className="text-[10px] text-slate-500 tracking-wide">Org Structure Designer</div>
           </div>
@@ -166,10 +176,59 @@ export function TopBar({
             </div>
           )}
         </div>
+
+        {/* 行业模板 下拉 */}
+        <div className="relative" ref={templatesRef}>
+          <button
+            onClick={() => setTemplatesOpen((v) => !v)}
+            className="hidden xl:flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+          >
+            <LayoutTemplate className="w-4 h-4" />
+            行业模板
+            <ChevronDown className={`w-4 h-4 transition-transform ${templatesOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {templatesOpen && (
+            <div className="absolute right-0 top-full mt-2 w-72 rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp">
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-400">
+                一键载入示例组织
+              </div>
+              {INDUSTRY_TEMPLATES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setTemplatesOpen(false);
+                    onLoadIndustryTemplate(t.id);
+                  }}
+                  className="w-full flex items-start gap-3 px-3 py-2.5 rounded-xl hover:bg-indigo-50 transition-colors text-left"
+                >
+                  <span
+                    className="w-9 h-9 rounded-lg grid place-items-center shrink-0 text-white"
+                    style={{ backgroundColor: t.accent }}
+                  >
+                    <LayoutTemplate className="w-4 h-4" />
+                  </span>
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-800">{t.name}</span>
+                    <span className="block text-xs text-slate-400 mt-0.5 leading-snug">{t.description}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 右区：缩放 + 撤销/重做 + 健康度 + 职级管理 */}
       <div className="flex items-center gap-2">
+        <button
+          onClick={onOpenSearch}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+          title="搜索 (Ctrl+F)"
+        >
+          <Search className="w-4 h-4" />
+          搜索
+        </button>
+
         <button
           onClick={onOpenHealth}
           disabled={!hasData}

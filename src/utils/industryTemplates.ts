@@ -1,0 +1,179 @@
+import { Employee, Department, OrgTemplate } from '../types';
+import { buildDepartmentTree } from './excel';
+
+/**
+ * 内置行业模板（v2.0.3 P1-4）。
+ * 预置 3-4 套典型组织，顶部下拉一键载入示例组织（覆盖互联网/制造/零售/医院科层）。
+ * 数据以员工路径 + 组织模板表示，经 buildDepartmentTree 复用同一套建树逻辑，保证口径一致。
+ */
+
+export interface IndustryTemplate {
+  id: string;
+  name: string;
+  description: string;
+  /** 展示用主色 */
+  accent: string;
+  /** 图标（lucide 名，简化处理） */
+  icon: string;
+  employees: Employee[];
+  orgTemplates: OrgTemplate[];
+}
+
+function emp(id: string, name: string, employeeId: string, level: string, depts: string[]): Employee {
+  return {
+    id,
+    name,
+    employeeId,
+    level,
+    dept1: depts[0] || '',
+    dept2: depts[1] || '',
+    dept3: depts[2] || '',
+    dept4: depts[3] || '',
+    dept5: depts[4] || '',
+    dept6: depts[5] || '',
+  };
+}
+
+function org(def: { depts: string[]; deptLevel?: string; leaderId?: string; leaderName?: string }): OrgTemplate {
+  return {
+    dept1: def.depts[0] || '',
+    dept2: def.depts[1] || '',
+    dept3: def.depts[2] || '',
+    dept4: def.depts[3] || '',
+    dept5: def.depts[4] || '',
+    dept6: def.depts[5] || '',
+    deptLevel: def.deptLevel,
+    leaderId: def.leaderId,
+    leaderName: def.leaderName,
+  };
+}
+
+/** 互联网科技 */
+const INTERNET = {
+  id: 'internet',
+  name: '互联网科技',
+  description: '扁平化研发组织：技术/产品/市场/运营，强研发导向',
+  accent: '#6366f1',
+  icon: 'Globe',
+  employees: [
+    emp('e1', '林涛', 'E001', 'L5', ['技术中心']),
+    emp('e2', '陈晨', 'E002', 'L3.2', ['技术中心', '研发部']),
+    emp('e3', '王雨', 'E003', 'L2.2', ['技术中心', '研发部', '前端组']),
+    emp('e4', '李安', 'E004', 'L2.1', ['技术中心', '研发部', '后端组']),
+    emp('e5', '赵敏', 'E005', 'L3.1', ['技术中心', '测试部']),
+    emp('e6', '孙杰', 'E006', 'L2.2', ['技术中心', '测试部', '自动化组']),
+    emp('e7', '周琪', 'E007', 'L3.2', ['产品部']),
+    emp('e8', '吴桐', 'E008', 'L2.1', ['产品部', '设计组']),
+    emp('e9', '郑飞', 'E009', 'L3.1', ['市场部']),
+    emp('e10', '冯蕾', 'E010', 'L2.2', ['市场部', '增长组']),
+  ],
+  orgTemplates: [
+    org({ depts: ['技术中心'], deptLevel: '1', leaderId: 'E001', leaderName: '林涛' }),
+    org({ depts: ['技术中心', '研发部'], deptLevel: '2', leaderId: 'E002', leaderName: '陈晨' }),
+    org({ depts: ['技术中心', '测试部'], deptLevel: '2', leaderId: 'E005', leaderName: '赵敏' }),
+    org({ depts: ['产品部'], deptLevel: '1', leaderId: 'E007', leaderName: '周琪' }),
+    org({ depts: ['市场部'], deptLevel: '1', leaderId: 'E009', leaderName: '郑飞' }),
+    org({ depts: ['运营部'], deptLevel: '1' }),
+  ],
+};
+
+/** 制造业 */
+const MANUFACTURING = {
+  id: 'manufacturing',
+  name: '制造业',
+  description: '科层制造组织：生产/质量/供应链/设备，层级偏深',
+  accent: '#10b981',
+  icon: 'Factory',
+  employees: [
+    emp('e1', '马建国', 'E001', 'L5', ['制造中心']),
+    emp('e2', '钱大力', 'E002', 'L4.1', ['制造中心', '生产部']),
+    emp('e3', '孙明', 'E003', 'L3.2', ['制造中心', '生产部', '装配车间']),
+    emp('e4', '李荣', 'E004', 'L3.1', ['制造中心', '生产部', '冲压车间']),
+    emp('e5', '周正', 'E005', 'L3.2', ['制造中心', '质量部']),
+    emp('e6', '吴工', 'E006', 'L2.2', ['制造中心', '质量部', '来料检验']),
+    emp('e7', '郑强', 'E007', 'L3.1', ['制造中心', '供应链部']),
+    emp('e8', '王仓', 'E008', 'L2.2', ['制造中心', '供应链部', '仓储组']),
+    emp('e9', '冯磊', 'E009', 'L3.1', ['制造中心', '设备部']),
+  ],
+  orgTemplates: [
+    org({ depts: ['制造中心'], deptLevel: '1', leaderId: 'E001', leaderName: '马建国' }),
+    org({ depts: ['制造中心', '生产部'], deptLevel: '2', leaderId: 'E002', leaderName: '钱大力' }),
+    org({ depts: ['制造中心', '质量部'], deptLevel: '2', leaderId: 'E005', leaderName: '周正' }),
+    org({ depts: ['制造中心', '供应链部'], deptLevel: '2', leaderId: 'E007', leaderName: '郑强' }),
+    org({ depts: ['制造中心', '设备部'], deptLevel: '2', leaderId: 'E009', leaderName: '冯磊' }),
+  ],
+};
+
+/** 零售连锁 */
+const RETAIL = {
+  id: 'retail',
+  name: '零售连锁',
+  description: '门店驱动组织：总部 + 区域 + 门店，直营网络',
+  accent: '#f59e0b',
+  icon: 'Store',
+  employees: [
+    emp('e1', '刘总', 'E001', 'L4.2', ['总部']),
+    emp('e2', '何静', 'E002', 'L3.2', ['总部', '运营中心']),
+    emp('e3', '罗强', 'E003', 'L3.1', ['总部', '商品中心']),
+    emp('e4', '高敏', 'E004', 'L2.2', ['总部', '商品中心', '采购组']),
+    emp('e5', '陈燕', 'E005', 'L2.2', ['总部', '运营中心', '华东区']),
+    emp('e6', '杨帆', 'E006', 'L2.1', ['总部', '运营中心', '华北区']),
+    emp('e7', '朱军', 'E007', 'L3.1', ['总部', '电商部']),
+    emp('e8', '许婷', 'E008', 'L2.2', ['总部', '运营中心', '华东区', '上海店']),
+  ],
+  orgTemplates: [
+    org({ depts: ['总部'], deptLevel: '1', leaderId: 'E001', leaderName: '刘总' }),
+    org({ depts: ['总部', '运营中心'], deptLevel: '2', leaderId: 'E002', leaderName: '何静' }),
+    org({ depts: ['总部', '商品中心'], deptLevel: '2', leaderId: 'E003', leaderName: '罗强' }),
+    org({ depts: ['总部', '电商部'], deptLevel: '2', leaderId: 'E007', leaderName: '朱军' }),
+  ],
+};
+
+/** 医院科层 */
+const HOSPITAL = {
+  id: 'hospital',
+  name: '医院科层',
+  description: '医疗科层组织：院长/医技/临床/护理，权力链严密',
+  accent: '#0ea5e9',
+  icon: 'HeartPulse',
+  employees: [
+    emp('e1', '王院长', 'E001', 'L5', ['医院']),
+    emp('e2', '张副院长', 'E002', 'L4.1', ['医院', '临床中心']),
+    emp('e3', '李主任', 'E003', 'L3.2', ['医院', '临床中心', '内科']),
+    emp('e4', '赵医生', 'E004', 'L2.2', ['医院', '临床中心', '内科', '心内组']),
+    emp('e5', '钱医生', 'E005', 'L2.1', ['医院', '临床中心', '外科']),
+    emp('e6', '孙护理部', 'E006', 'E4.1', ['医院', '护理部']),
+    emp('e7', '周护士长', 'E007', 'E3.1', ['医院', '护理部', '内科病区']),
+    emp('e8', '吴技师', 'E008', 'E3.2', ['医院', '医技部']),
+    emp('e9', '郑药师', 'E009', 'E3.1', ['医院', '药剂科']),
+  ],
+  orgTemplates: [
+    org({ depts: ['医院'], deptLevel: '1', leaderId: 'E001', leaderName: '王院长' }),
+    org({ depts: ['医院', '临床中心'], deptLevel: '2', leaderId: 'E002', leaderName: '张副院长' }),
+    org({ depts: ['医院', '临床中心', '内科'], deptLevel: '3', leaderId: 'E003', leaderName: '李主任' }),
+    org({ depts: ['医院', '护理部'], deptLevel: '2', leaderId: 'E006', leaderName: '孙护理部' }),
+    org({ depts: ['医院', '医技部'], deptLevel: '2', leaderId: 'E008', leaderName: '吴技师' }),
+    org({ depts: ['医院', '药剂科'], deptLevel: '2', leaderId: 'E009', leaderName: '郑药师' }),
+  ],
+};
+
+/** 全部内置模板（顺序即下拉展示顺序） */
+export const INDUSTRY_TEMPLATES: IndustryTemplate[] = [
+  INTERNET,
+  MANUFACTURING,
+  RETAIL,
+  HOSPITAL,
+];
+
+/** 载入内置模板，复用 buildDepartmentTree 生成组织树与员工扁平列表。 */
+export function loadIndustryTemplate(
+  template: IndustryTemplate,
+): { departments: Department[]; allEmployeesFlat: Employee[] } {
+  const departments = buildDepartmentTree(template.employees, template.orgTemplates);
+  return { departments, allEmployeesFlat: [...template.employees] };
+}
+
+/** 按 id 查找模板；未找到返回 null。 */
+export function findIndustryTemplate(id: string): IndustryTemplate | null {
+  return INDUSTRY_TEMPLATES.find((t) => t.id === id) ?? null;
+}

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   computeTreeDepth,
   computeL1,
@@ -7,6 +7,15 @@ import {
   computeHealthReport,
   flattenDepartments,
   HEALTH_STATUS_LABEL,
+  generateSuggestions,
+  generateDeptSuggestions,
+  collectAllSuggestions,
+  DEFAULT_HEALTH_THRESHOLDS,
+  getHealthThresholds,
+  setHealthThresholds,
+  resetHealthThresholds,
+  HealthThresholds,
+  L2Metric,
 } from './analytics';
 import { Employee, Department, LevelConfig } from '../types';
 
@@ -275,12 +284,13 @@ describe('computeL1 边界', () => {
 });
 
 describe('computeL2 边界', () => {
-  it('空树：depth=0 健康，span/vacancy/managerRatio 均为 null', () => {
+  it('空树：depth=0 判中性/关注（不作层级健康），span/vacancy/managerRatio 均为 null', () => {
     const l2 = computeL2([]);
     expect(l2).toHaveLength(4);
     const depth = l2.find((x) => x.key === 'depth')!;
     expect(depth.value).toBe(0);
-    expect(depth.status).toBe('healthy');
+    expect(depth.status).toBe('warn');
+    expect(depth.verdict).toContain('无法评估层级');
     for (const key of ['span', 'vacancy', 'managerRatio'] as const) {
       expect(l2.find((x) => x.key === key)!.value).toBeNull();
     }
@@ -455,5 +465,253 @@ describe('computeHealthReport 边界', () => {
     expect(l1.levelDistribution).toEqual({ 'L1.1': 1, 'L2.1': 1 }); // 分布含虚拟
     const l3 = report.l3[0];
     expect(l3.actualCost).toBe(2); // 仅 real (L1.1 cost 2)
+  });
+});
+
+describe('generateSuggestions（指标级建议，P1-3）', () => {
+  it('健康指标不产生建议', () => {
+    // 8 人 + 编制 8（满编）+ 1 管理者（12.5%）→ 四项均为健康
+    const root = dept('tech', '技术部', 1, {
+      leaderId: 'L1',
+      leaderName: '领导',
+      headcount: 8,
+      employees: Array.from({ length: 8 }, (_, i) => emp(`e${i}`, 'L1.1')),
+    });
+    const l2 = computeL2([root]);
+    expect(l2.every((m) => m.status === 'healthy')).toBe(true);
+    expect(generateSuggestions(l2)).toEqual([]);
+  });
+
+  it('空岗指标预警 → 生成招聘建议', () => {
+    const root = dept('t', 'T', 1, { headcount: 40, employees: Array.from({ length: 20 }, (_, i) => emp(`e${i}`, 'L1.1')) });
+    const l2 = computeL2([root]);
+    const s = generateSuggestions(l2);
+    const vacS = s.find((x) => x.metricKey === 'vacancy' && x.severity === 'critical');
+    expect(vacS).toBeDefined();
+    expect(vacS!.title).toContain('招聘');
+  });
+
+  it('管理幅度预警 → 生成优化汇报线建议', () => {
+    const only = dept('m', 'M', 1, { leaderId: 'L1', leaderName: '领导', employees: [] });
+    const l2 = computeL2([only]);
+    const s = generateSuggestions(l2);
+    const spanS = s.find((x) => x.metricKey === 'span');
+    expect(spanS).toBeDefined();
+    expect(spanS!.detail).toContain('管理幅度');
+  });
+});
+
+describe('generateDeptSuggestions（部门级建议，P1-3）', () => {
+  it('空岗部门 → 生成带部门名的补编建议', () => {
+    const root = dept('tech', '技术部', 1, { headcount: 10, employees: Array.from({ length: 4 }, (_, i) => emp(`e${i}`, 'L1.1')) });
+    const s = generateDeptSuggestions([root]);
+    const vacS = s.find((x) => x.deptId === 'tech' && x.title.includes('空岗'));
+    expect(vacS).toBeDefined();
+    expect(vacS!.deptName).toBe('技术部');
+    expect(vacS!.severity).toBe('critical'); // 60% 空岗
+  });
+
+  it('规模偏窄的管理部门 → 建议合并小组', () => {
+    const root = dept('tech', '技术部', 1, { leaderId: 'L01', leaderName: '领导', employees: [emp('a', 'L1.1')] });
+    const s = generateDeptSuggestions([root]);
+    const spanS = s.find((x) => x.metricKey === 'span' && x.title.includes('偏窄'));
+    expect(spanS).toBeDefined();
+    expect(spanS!.detail).toContain('合并');
+  });
+
+  it('未配置编制 → 提示补充编制（info）', () => {
+    const root = dept('tech', '技术部', 1, { employees: [emp('a', 'L1.1')] });
+    const s = generateDeptSuggestions([root]);
+    const nohc = s.find((x) => x.title.includes('未配置编制'));
+    expect(nohc).toBeDefined();
+    expect(nohc!.severity).toBe('info');
+  });
+});
+
+describe('collectAllSuggestions（合并指标+部门建议）', () => {
+  it('合并并按严重级排序', () => {
+    const root = dept('tech', '技术部', 1, { headcount: 10, employees: Array.from({ length: 4 }, (_, i) => emp(`e${i}`, 'L1.1')), leaderId: 'L0', leaderName: '领导' });
+    const report = computeHealthReport([root], COSTS);
+    const all = collectAllSuggestions(report, [root]);
+    expect(all.length).toBeGreaterThan(0);
+    const sevRank = { critical: 0, major: 1, minor: 2, info: 3 } as const;
+    for (let i = 1; i < all.length; i++) {
+      expect(sevRank[all[i].severity]).toBeGreaterThanOrEqual(sevRank[all[i - 1].severity]);
+    }
+  });
+});
+
+describe('阈值可配置化（P2-7）', () => {
+  it('computeL2 支持自定义空岗率阈值', () => {
+    const root = dept('t', 'T', 1, { headcount: 20, employees: Array.from({ length: 4 }, (_, i) => emp(`e${i}`, 'L1.1')) });
+    const custom = { ...DEFAULT_HEALTH_THRESHOLDS, vacancyHealthyMax: 90, vacancyWarnMax: 95 };
+    const vac = computeL2([root], custom).find((x) => x.key === 'vacancy')!;
+    // (20-4)/20 = 80% ≤ 90 → healthy（默认阈值下为 danger）
+    expect(vac.status).toBe('healthy');
+  });
+
+  it('computeHealthReport 支持自定义管理幅度阈值', () => {
+    const only = dept('m', 'M', 1, { leaderId: 'L1', leaderName: '领导', employees: [emp('a', 'L1.1')] });
+    const strict = { ...DEFAULT_HEALTH_THRESHOLDS, spanWarnMax: 0, spanWarnLow: 0, spanHealthyMin: 0, spanHealthyMax: 0 };
+    const report = computeHealthReport([only], COSTS, undefined, strict);
+    const span = report.l2.find((x) => x.key === 'span')!;
+    // 1 人直管，健康区间 [0,0]，1>0 且 1>warnMax(0) → danger
+    expect(span.status).toBe('danger');
+  });
+});
+
+// —— 以下为测试专家补测（填补前端未覆盖边界） ——
+
+describe('generateSuggestions（指标级建议）边界补充', () => {
+  it('多项异常 → 每条非健康指标各生成建议，健康指标被跳过', () => {
+    const metrics: L2Metric[] = [
+      { key: 'span', label: '管理幅度', value: 1.5, unit: '人', status: 'warn', verdict: '偏窄' },
+      { key: 'depth', label: '层级深度', value: 3, unit: '层', status: 'healthy', verdict: '精简' },
+      { key: 'managerRatio', label: '管理者比', value: 30, unit: '%', status: 'danger', verdict: '过高' },
+      { key: 'vacancy', label: '空岗率', value: 8, unit: '%', status: 'healthy', verdict: '满编' },
+    ];
+    const s = generateSuggestions(metrics);
+    // 只有 span(warn) 与 managerRatio(danger) 两条；depth/vacancy 健康被跳过
+    expect(s).toHaveLength(2);
+    expect(s.map((x) => x.metricKey).sort()).toEqual(['managerRatio', 'span']);
+  });
+
+  it('风险优先级：danger → critical、warn → major', () => {
+    const metrics: L2Metric[] = [
+      { key: 'vacancy', label: '空岗率', value: 30, unit: '%', status: 'danger', verdict: '严重缺编' },
+      { key: 'span', label: '管理幅度', value: 1.5, unit: '人', status: 'warn', verdict: '偏窄' },
+    ];
+    const s = generateSuggestions(metrics);
+    const vac = s.find((x) => x.metricKey === 'vacancy')!;
+    const span = s.find((x) => x.metricKey === 'span')!;
+    expect(vac.severity).toBe('critical');
+    expect(span.severity).toBe('major');
+  });
+
+  it('span 值为 null（无任何有负责人部门）→ 仍生成建议，detail 提示配置负责人', () => {
+    // 无 leaderId/leaderName → spanLeaders=0 → span=null，status=warn
+    const noLeader = dept('t', 'T', 1, { employees: [emp('a', 'L1.1')] });
+    const s = generateSuggestions(computeL2([noLeader]));
+    const span = s.find((x) => x.metricKey === 'span')!;
+    expect(span).toBeDefined();
+    expect(span.title).toBe('优化管理幅度');
+    expect(span.detail).toContain('配置负责人');
+    expect(span.severity).toBe('major');
+  });
+
+  it('建议 id 格式为 m-<key>', () => {
+    const metrics: L2Metric[] = [
+      { key: 'depth', label: '层级深度', value: 8, unit: '层', status: 'danger', verdict: '过深' },
+    ];
+    const s = generateSuggestions(metrics);
+    expect(s[0].id).toBe('m-depth');
+  });
+});
+
+describe('generateDeptSuggestions（部门级建议）边界补充', () => {
+  it('管理幅度偏宽（direct > spanHealthyMax=8）→ major', () => {
+    const employees = Array.from({ length: 9 }, (_, i) => emp(`e${i}`, 'L1.1'));
+    const root = dept('tech', '技术部', 1, { leaderId: 'L01', leaderName: '领导', employees });
+    const s = generateDeptSuggestions([root], DEFAULT_HEALTH_THRESHOLDS);
+    const wide = s.find((x) => x.id === 'd-tech-spanwide')!;
+    expect(wide).toBeDefined();
+    expect(wide.severity).toBe('major');
+    expect(wide.title).toContain('偏宽');
+    expect(wide.title).toContain('9 人');
+  });
+
+  it('超编（gap<0）超编占比 > overWarnRatio=20% → critical', () => {
+    // headcount=10, actual=13 → gap=-3, 超编占比 3/13≈23.1% > 20% → critical
+    const root = dept('o', '市场部', 1, { headcount: 10, employees: Array.from({ length: 13 }, (_, i) => emp(`e${i}`, 'L1.1')) });
+    const s = generateDeptSuggestions([root], DEFAULT_HEALTH_THRESHOLDS);
+    const over = s.find((x) => x.id === 'd-o-over')!;
+    expect(over).toBeDefined();
+    expect(over.severity).toBe('critical');
+    expect(over.title).toContain('超编 3 人');
+    expect(over.detail).toContain('内部转岗');
+  });
+
+  it('空岗率三级分级：=10% minor、(10,20]% major、>20% critical', () => {
+    const minor = dept('mi', '轻微缺编', 1, { headcount: 10, employees: Array.from({ length: 9 }, (_, i) => emp(`e${i}`, 'L1.1')) }); // 10% → minor
+    const major = dept('ma', '中度缺编', 1, { headcount: 10, employees: Array.from({ length: 8 }, (_, i) => emp(`e${i}`, 'L1.1')) }); // 20% → major
+    const s = generateDeptSuggestions([minor, major], DEFAULT_HEALTH_THRESHOLDS);
+    const mi = s.find((x) => x.deptId === 'mi' && x.title.includes('空岗'))!;
+    const ma = s.find((x) => x.deptId === 'ma' && x.title.includes('空岗'))!;
+    expect(mi.severity).toBe('minor');
+    expect(ma.severity).toBe('major');
+  });
+
+  it('建议按严重度排序（critical → major → minor → info）且 id 含部门', () => {
+    const critical = dept('c', 'C组', 1, { headcount: 10, employees: Array.from({ length: 4 }, (_, i) => emp(`e${i}`, 'L1.1')) }); // 60% 空岗 critical
+    const info = dept('i', 'I组', 1, { employees: [emp('a', 'L1.1')] }); // 未配置编制 info
+    const s = generateDeptSuggestions([info, critical], DEFAULT_HEALTH_THRESHOLDS);
+    const sevRank = { critical: 0, major: 1, minor: 2, info: 3 } as const;
+    for (let i = 1; i < s.length; i++) {
+      expect(sevRank[s[i].severity]).toBeGreaterThanOrEqual(sevRank[s[i - 1].severity]);
+    }
+    expect(s[0].severity).toBe('critical');
+    expect(s[0].deptId).toBe('c');
+    expect(s[s.length - 1].severity).toBe('info');
+  });
+});
+
+describe('阈值可配置化（get/set/reset + localStorage 默认回退）', () => {
+  const storage = new Map<string, string>();
+
+  beforeEach(() => {
+    storage.clear();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => storage.set(k, v),
+      removeItem: (k: string) => storage.delete(k),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('未配置 → getHealthThresholds 返回默认阈值', () => {
+    expect(getHealthThresholds()).toEqual(DEFAULT_HEALTH_THRESHOLDS);
+  });
+
+  it('setHealthThresholds 持久化后 getHealthThresholds 返回覆盖值，未覆盖字段回退默认', () => {
+    const custom: HealthThresholds = { ...DEFAULT_HEALTH_THRESHOLDS, vacancyHealthyMax: 30, vacancyWarnMax: 40 };
+    setHealthThresholds(custom);
+    expect(storage.get('org-designer.health-thresholds')).toBeTruthy();
+    const got = getHealthThresholds();
+    expect(got.vacancyHealthyMax).toBe(30);
+    expect(got.vacancyWarnMax).toBe(40);
+    expect(got.spanHealthyMin).toBe(DEFAULT_HEALTH_THRESHOLDS.spanHealthyMin);
+  });
+
+  it('getHealthThresholds 对部分覆盖做合并（缺省字段回退默认）', () => {
+    storage.set('org-designer.health-thresholds', JSON.stringify({ spanHealthyMax: 10 }));
+    const got = getHealthThresholds();
+    expect(got.spanHealthyMax).toBe(10);
+    expect(got.spanHealthyMin).toBe(DEFAULT_HEALTH_THRESHOLDS.spanHealthyMin);
+  });
+
+  it('解析非法 JSON → 回退默认阈值', () => {
+    storage.set('org-designer.health-thresholds', '{not valid json');
+    expect(getHealthThresholds()).toEqual(DEFAULT_HEALTH_THRESHOLDS);
+  });
+
+  it('resetHealthThresholds 清除配置并恢复默认', () => {
+    setHealthThresholds({ ...DEFAULT_HEALTH_THRESHOLDS, spanHealthyMin: 1 });
+    resetHealthThresholds();
+    expect(storage.has('org-designer.health-thresholds')).toBe(false);
+    expect(getHealthThresholds()).toEqual(DEFAULT_HEALTH_THRESHOLDS);
+  });
+});
+
+describe('computeL1 接受阈值参数（可配置化缺口）', () => {
+  it('computeL1 用传入阈值覆盖空岗状态', () => {
+    const root = dept('t', '技术部', 1, { headcount: 10, employees: Array.from({ length: 4 }, (_, i) => emp(`e${i}`, 'L1.1')) });
+    // 缺省（当前阈值）：空岗率 60% > 20% → danger
+    expect(computeL1([root])[0].status).toBe('danger');
+    // 自定义放宽空岗阈值：60% ≤ 90 → healthy
+    const loose: HealthThresholds = { ...DEFAULT_HEALTH_THRESHOLDS, vacancyHealthyMax: 90, vacancyWarnMax: 95 };
+    expect(computeL1([root], loose)[0].status).toBe('healthy');
   });
 });

@@ -1,6 +1,6 @@
 [package]
 name = "org-structure-designer"
-version = "2.0.2"
+version = "2.0.3"
 description = "组织架构设计工具 - 桌面版 (Tauri)"
 authors = ["Max Hou"]
 license = "Apache-2.0"

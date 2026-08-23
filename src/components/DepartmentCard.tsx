@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, User, Users, Building2 } from 'lucide-react'
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
+import { useSearchHighlight } from './SearchContext';
 
 interface DepartmentCardProps {
   department: Department;
@@ -13,12 +14,20 @@ interface DepartmentCardProps {
   onCreateVirtualEmployee: (deptId: string) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   allEmployees: Employee[];
+  /** 当前选中的员工 id（批量操作用） */
+  selectedEmpIds?: Set<string>;
+  /** 点击员工切换选中（additive=Shift 加成选） */
+  onToggleSelectEmp?: (empId: string, additive: boolean) => void;
 }
 
 function DraggableEmployee({ 
-  employee
+  employee,
+  selected,
+  onSelect
 }: { 
   employee: Employee;
+  selected?: boolean;
+  onSelect?: (empId: string, additive: boolean) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: employee.id,
@@ -27,14 +36,24 @@ function DraggableEmployee({
 
   const levelConfigs = useLevelConfigs();
   const levelColor = getLevelColor(levelConfigs, employee.level);
+  const highlight = useSearchHighlight();
+  const isSearchHit = highlight.empIds.has(employee.id);
   
   return (
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
+      data-emp-id={employee.id}
+      onClick={(e) => {
+        // 阻止拖拽/点击冒泡到卡片的空白选中
+        e.stopPropagation();
+        onSelect?.(employee.id, e.shiftKey);
+      }}
       className={`employee-tag flex items-center gap-1 px-2 py-1 rounded-lg text-xs cursor-move hover:shadow-sm transition-shadow ${
         isDragging ? 'opacity-50' : ''
+      } ${selected ? 'ring-2 ring-indigo-400 bg-indigo-50/80' : ''} ${
+        isSearchHit ? 'ring-2 ring-amber-400 bg-amber-50/70' : ''
       }`}
       style={{ backgroundColor: levelColor + '40' }}
     >
@@ -51,11 +70,15 @@ function DraggableEmployee({
 function EmployeeList({ 
   employees, 
   onDelete,
-  canDelete
+  canDelete,
+  selectedEmpIds,
+  onSelect
 }: { 
   employees: Employee[];
   onDelete: (empId: string) => void;
   canDelete: boolean;
+  selectedEmpIds?: Set<string>;
+  onSelect?: (empId: string, additive: boolean) => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; empId: string } | null>(null);
   
@@ -79,7 +102,7 @@ function EmployeeList({
           key={emp.id}
           onContextMenu={(e) => handleContextMenu(e, emp.id)}
         >
-          <DraggableEmployee employee={emp} />
+          <DraggableEmployee employee={emp} selected={selectedEmpIds?.has(emp.id)} onSelect={onSelect} />
           {contextMenu?.empId === emp.id && (
             <div
               className="fixed bg-white border border-gray-200 rounded shadow-lg py-1 z-50"
@@ -111,6 +134,8 @@ export function DepartmentCard({
   onCreateVirtualEmployee,
   onChangeDepartmentLevel,
   allEmployees,
+  selectedEmpIds,
+  onToggleSelectEmp,
 }: DepartmentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(department.name);
@@ -122,6 +147,8 @@ export function DepartmentCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const levelConfigs = useLevelConfigs();
+  const highlight = useSearchHighlight();
+  const isSearchHit = highlight.deptIds.has(department.id);
   
   // 部门拖拽
   const { attributes: deptAttributes, listeners: deptListeners, setNodeRef: setDeptRef, isDragging: isDeptDragging } = useDraggable({
@@ -195,9 +222,12 @@ export function DepartmentCard({
       }}
       {...deptAttributes}
       {...deptListeners}
+      data-dept-id={department.id}
       className={`flex flex-col department-card rounded-2xl shadow-soft border-0 cursor-move ${
         levelBg[department.level] || 'level-bg-1'
-      } ${isOver ? 'ring-2 ring-indigo-400 bg-indigo-50/50' : ''} ${isDeptDragging ? 'opacity-50 scale-95' : ''}`}
+      } ${isOver ? 'ring-2 ring-indigo-400 bg-indigo-50/50' : ''} ${
+        isSearchHit ? 'ring-2 ring-amber-400' : ''
+      } ${isDeptDragging ? 'opacity-50 scale-95' : ''}`}
       style={{ 
         minWidth: 220,
         fontSize: '14px',
@@ -318,6 +348,8 @@ export function DepartmentCard({
               employees={department.employees}
               onDelete={(empId) => onDeleteEmployee(department.id, empId)}
               canDelete={true}
+              selectedEmpIds={selectedEmpIds}
+              onSelect={onToggleSelectEmp}
             />
           ) : (
             <div className="text-xs text-gray-400 text-center py-2">
