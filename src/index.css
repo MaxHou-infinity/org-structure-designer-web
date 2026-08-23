@@ -247,3 +247,13 @@ body {
 .delay-300 { animation-delay: 300ms; }
 .delay-400 { animation-delay: 400ms; }
 .delay-500 { animation-delay: 500ms; }
+
+/* 诊断报告：打印/导出样式（v2.0.2 Feature D） */
+@media print {
+  body { background: #fff !important; }
+  .no-print { display: none !important; }
+  .report-section { break-inside: avoid; }
+  .report-orgchart { break-inside: avoid; page-break-inside: avoid; }
+  @page { margin: 1.2cm; }
+}
+

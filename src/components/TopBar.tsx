@@ -1,7 +1,27 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus } from 'lucide-react';
+import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity } from 'lucide-react';
+import { Scenario } from '../types';
+import { SaveState } from '../utils/useOrgWorkspace';
+import { ScenarioSwitcher } from './ScenarioSwitcher';
 
 interface TopBarProps {
+  projectName: string;
+  scenarios: Scenario[];
+  currentScenarioId: string;
+  onSwitchScenario: (id: string) => void;
+  onCreateScenario: (name: string) => void;
+  onRenameScenario: (id: string, name: string) => void;
+  onDeleteScenario: (id: string) => void;
+  onDuplicateScenario: (id: string) => void;
+  onManageScenarios: () => void;
+  saveState: SaveState;
+  lastSavedAt: string | null;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  onOpenHealth: () => void;
+  hasData: boolean;
   onDownloadEmployeeTemplate: () => void;
   onDownloadOrgTemplate: () => void;
   onManageLevels: () => void;
@@ -10,7 +30,38 @@ interface TopBarProps {
   onZoomOut: () => void;
 }
 
+function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastSavedAt: string | null }) {
+  switch (saveState) {
+    case 'unsaved':
+      return <span className="inline-flex items-center gap-1 text-[10px] text-amber-600"><span className="w-1.5 h-1.5 rounded-full bg-amber-500" />未保存更改</span>;
+    case 'saving':
+      return <span className="inline-flex items-center gap-1 text-[10px] text-slate-500"><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-pulse" />保存中…</span>;
+    case 'failed':
+      return <span className="inline-flex items-center gap-1 text-[10px] text-red-600"><span className="w-1.5 h-1.5 rounded-full bg-red-500" />保存失败</span>;
+    case 'saved':
+    default:
+      return <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />已保存{lastSavedAt ? ` ${lastSavedAt}` : ''}</span>;
+  }
+}
+
 export function TopBar({
+  projectName,
+  scenarios,
+  currentScenarioId,
+  onSwitchScenario,
+  onCreateScenario,
+  onRenameScenario,
+  onDeleteScenario,
+  onDuplicateScenario,
+  onManageScenarios,
+  saveState,
+  lastSavedAt,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  onOpenHealth,
+  hasData,
   onDownloadEmployeeTemplate,
   onDownloadOrgTemplate,
   onManageLevels,
@@ -21,7 +72,6 @@ export function TopBar({
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsRef = useRef<HTMLDivElement>(null);
 
-  // 点击外部关闭下拉
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (toolsRef.current && !toolsRef.current.contains(e.target as Node)) {
@@ -34,26 +84,44 @@ export function TopBar({
 
   return (
     <header className="h-14 flex items-center justify-between px-5 border-b border-white/40 bg-white/70 backdrop-blur-xl shadow-soft z-20">
-      {/* 左侧：品牌 + 主菜单 */}
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-3">
+      {/* 左区：品牌 + 项目名 + 场景切换 + 保存状态 */}
+      <div className="flex items-center gap-4 min-w-0">
+        <div className="flex items-center gap-3 shrink-0">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center text-white shadow-md">
             <Building2 className="w-5 h-5" />
           </div>
           <div className="leading-tight">
             <div className="flex items-center gap-2">
               <span className="text-[15px] font-bold text-slate-900 tracking-tight">组织架构设计</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.1</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.2</span>
             </div>
             <div className="text-[10px] text-slate-500 tracking-wide">Org Structure Designer</div>
           </div>
         </div>
 
+        <div className="hidden md:flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-slate-800 truncate max-w-[160px]" title={projectName}>
+            {projectName}
+          </span>
+          <SaveIndicator saveState={saveState} lastSavedAt={lastSavedAt} />
+        </div>
+
+        <ScenarioSwitcher
+          scenarios={scenarios}
+          currentScenarioId={currentScenarioId}
+          onSwitch={onSwitchScenario}
+          onCreate={onCreateScenario}
+          onRename={onRenameScenario}
+          onDelete={onDeleteScenario}
+          onDuplicate={onDuplicateScenario}
+          onManage={onManageScenarios}
+        />
+
         {/* 工具模板 子菜单 */}
         <div className="relative" ref={toolsRef}>
           <button
             onClick={() => setToolsOpen((v) => !v)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white text-sm font-medium shadow-md hover:shadow-lg transition-all"
+            className="hidden lg:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white text-sm font-medium shadow-md hover:shadow-lg transition-all"
           >
             <FileSpreadsheet className="w-4 h-4" />
             工具模板
@@ -100,9 +168,18 @@ export function TopBar({
         </div>
       </div>
 
-      {/* 右侧：缩放控件 + 职级管理 */}
-      <div className="flex items-center gap-3">
-        {/* 缩放控件（同步顶部栏，复用侧边栏 handlers） */}
+      {/* 右区：缩放 + 撤销/重做 + 健康度 + 职级管理 */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onOpenHealth}
+          disabled={!hasData}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="组织健康度"
+        >
+          <Activity className="w-4 h-4" />
+          健康度
+        </button>
+
         <div className="flex items-center gap-1 px-1.5 py-1 rounded-xl bg-slate-100/80 border border-slate-200/60">
           <button
             onClick={onZoomOut}
@@ -126,6 +203,25 @@ export function TopBar({
             <Plus className="w-4 h-4" />
           </button>
         </div>
+
+        <button
+          onClick={onUndo}
+          disabled={!canUndo}
+          className="flex items-center justify-center w-9 h-9 rounded-lg text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          aria-label="撤销"
+          title="撤销 (Ctrl+Z)"
+        >
+          <Undo2 className="w-4 h-4" />
+        </button>
+        <button
+          onClick={onRedo}
+          disabled={!canRedo}
+          className="flex items-center justify-center w-9 h-9 rounded-lg text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          aria-label="重做"
+          title="重做 (Ctrl+Shift+Z)"
+        >
+          <Redo2 className="w-4 h-4" />
+        </button>
 
         <button
           onClick={onManageLevels}

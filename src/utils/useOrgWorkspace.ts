@@ -1,0 +1,360 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ProjectFile,
+  LevelConfig,
+  Employee,
+  Department,
+  ScenarioCanvas,
+} from '../types';
+import {
+  createProject,
+  createScenario,
+  cloneScenario,
+  serializeProject,
+  parseProject,
+  loadProject,
+  persistProject,
+  getCurrentScenario,
+} from './project';
+import { useLevelConfigs, updateLevelConfigs } from './levels';
+import { useHistoryState, HistorySnapshot } from './history';
+
+export type SaveState = 'saved' | 'saving' | 'unsaved' | 'failed';
+
+function formatTime(iso: string | null): string | null {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 工作区编排 Hook：把「项目文件 + 场景 + 实时快照 + 历史 + 自动保存 + 保存状态」
+ * 收敛到一处，供 App 消费。纯逻辑（analytics/project/history）在单测中覆盖，本 Hook 为整合胶水。
+ */
+export function useOrgWorkspace() {
+  const [project, setProjectState] = useState<ProjectFile>(() => {
+    return loadProject() ?? createProject('组织架构项目');
+  });
+  const projectRef = useRef(project);
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
+  const levelConfigs = useLevelConfigs();
+  const levelConfigsRef = useRef(levelConfigs);
+  useEffect(() => {
+    levelConfigsRef.current = levelConfigs;
+  }, [levelConfigs]);
+
+  const initialScenario = getCurrentScenario(project);
+
+  const history = useHistoryState<HistorySnapshot>(
+    {
+      departments: initialScenario.departments,
+      allEmployeesFlat: initialScenario.allEmployeesFlat,
+    },
+    50,
+  );
+  const { state: live, set: setSnapshot, replace: replaceSnapshot, undo, redo, canUndo, canRedo } = history;
+  const { departments, allEmployeesFlat } = live;
+  const departmentsRef = useRef(departments);
+  const employeesRef = useRef(allEmployeesFlat);
+  useEffect(() => {
+    departmentsRef.current = departments;
+    employeesRef.current = allEmployeesFlat;
+  }, [departments, allEmployeesFlat]);
+
+  const [zoom, setZoomState] = useState<number>(initialScenario.canvas.zoom ?? 100);
+  const zoomRef = useRef(zoom);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(() =>
+    formatTime(initialScenario.updatedAt),
+  );
+
+  const dirtyTimer = useRef<number | null>(null);
+  const firstRun = useRef(true);
+
+  /** 把实时快照写回当前场景并持久化（不重置 saveState 计时）。 */
+  const patchCurrentScenario = useCallback((): void => {
+    const now = new Date().toISOString();
+    const cur = projectRef.current;
+    const next: ProjectFile = {
+      ...cur,
+      scenarios: cur.scenarios.map((s) =>
+        s.id === cur.currentScenarioId
+          ? {
+              ...s,
+              departments: departmentsRef.current,
+              allEmployeesFlat: employeesRef.current,
+              levelConfigs: levelConfigsRef.current,
+              canvas: { ...s.canvas, zoom: zoomRef.current },
+              updatedAt: now,
+            }
+          : s,
+      ),
+      meta: { ...cur.meta, updatedAt: now },
+    };
+    projectRef.current = next;
+    setProjectState(next);
+    const ok = persistProject(next);
+    setSaveState(ok ? 'saved' : 'failed');
+    setLastSavedAt(formatTime(now));
+  }, []);
+
+  /** 强制保存当前场景（清空计时器 + 立即落盘）。 */
+  const flushCurrent = useCallback((): ProjectFile => {
+    if (dirtyTimer.current) {
+      clearTimeout(dirtyTimer.current);
+      dirtyTimer.current = null;
+    }
+    patchCurrentScenario();
+    return projectRef.current;
+  }, [patchCurrentScenario]);
+
+  // 自动保存：任何会改 departments/allEmployeesFlat/zoom/levelConfigs 的动作 → debounce 800ms 落盘
+  useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    setSaveState('unsaved');
+    if (dirtyTimer.current) clearTimeout(dirtyTimer.current);
+    dirtyTimer.current = window.setTimeout(() => {
+      setSaveState('saving');
+      patchCurrentScenario();
+    }, 800);
+    return () => {
+      if (dirtyTimer.current) clearTimeout(dirtyTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [departments, allEmployeesFlat, zoom, levelConfigs]);
+
+  /** —— 快照更新器（历史感知） —— */
+
+  const setDepartments = useCallback(
+    (fn: (prev: Department[]) => Department[]) => {
+      setSnapshot((prev) => ({ ...prev, departments: fn(prev.departments) }));
+    },
+    [setSnapshot],
+  );
+
+  const setAllEmployeesFlat = useCallback(
+    (fn: (prev: Employee[]) => Employee[]) => {
+      setSnapshot((prev) => ({ ...prev, allEmployeesFlat: fn(prev.allEmployeesFlat) }));
+    },
+    [setSnapshot],
+  );
+
+  const setBoth = useCallback(
+    (fn: (prev: HistorySnapshot) => HistorySnapshot) => {
+      setSnapshot(fn);
+    },
+    [setSnapshot],
+  );
+
+  /** 载入一个场景快照到实时态（重置历史） */
+  const loadSnapshot = useCallback(
+    (snap: { departments: Department[]; allEmployeesFlat: Employee[]; levelConfigs: LevelConfig[]; canvas: ScenarioCanvas }) => {
+      replaceSnapshot({ departments: snap.departments, allEmployeesFlat: snap.allEmployeesFlat });
+      setZoomState(snap.canvas.zoom ?? 100);
+      updateLevelConfigs(snap.levelConfigs);
+    },
+    [replaceSnapshot],
+  );
+
+  /** —— 场景操作 —— */
+
+  const currentScenario = getCurrentScenario(project);
+
+  const switchScenario = useCallback(
+    (sceneId: string) => {
+      const target = projectRef.current.scenarios.find((s) => s.id === sceneId);
+      if (!target || target.id === projectRef.current.currentScenarioId) return;
+      flushCurrent(); // 保存当前场景
+      const next: ProjectFile = { ...projectRef.current, currentScenarioId: sceneId };
+      projectRef.current = next;
+      setProjectState(next);
+      loadSnapshot({
+        departments: target.departments,
+        allEmployeesFlat: target.allEmployeesFlat,
+        levelConfigs: target.levelConfigs,
+        canvas: target.canvas,
+      });
+    },
+    [flushCurrent, loadSnapshot],
+  );
+
+  const createNewScenario = useCallback(
+    (name: string) => {
+      flushCurrent();
+      const snap = {
+        departments: departmentsRef.current,
+        allEmployeesFlat: employeesRef.current,
+        levelConfigs: levelConfigsRef.current,
+        canvas: { zoom: zoomRef.current },
+      };
+      const created = createScenario(name, snap);
+      const next: ProjectFile = {
+        ...projectRef.current,
+        currentScenarioId: created.id,
+        scenarios: [...projectRef.current.scenarios, created],
+        meta: { ...projectRef.current.meta, updatedAt: new Date().toISOString() },
+      };
+      projectRef.current = next;
+      setProjectState(next);
+      persistProject(next);
+    },
+    [flushCurrent],
+  );
+
+  const duplicateScenario = useCallback(
+    (sceneId: string) => {
+      const target = projectRef.current.scenarios.find((s) => s.id === sceneId);
+      if (!target) return;
+      const copied = cloneScenario(target);
+      const next: ProjectFile = {
+        ...projectRef.current,
+        scenarios: [...projectRef.current.scenarios, copied],
+      };
+      projectRef.current = next;
+      setProjectState(next);
+      persistProject(next);
+    },
+    [],
+  );
+
+  const renameScenario = useCallback(
+    (sceneId: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const next: ProjectFile = {
+        ...projectRef.current,
+        scenarios: projectRef.current.scenarios.map((s) =>
+          s.id === sceneId ? { ...s, name: trimmed, updatedAt: new Date().toISOString() } : s,
+        ),
+      };
+      projectRef.current = next;
+      setProjectState(next);
+      persistProject(next);
+    },
+    [],
+  );
+
+  const deleteScenario = useCallback(
+    (sceneId: string): boolean => {
+      const cur = projectRef.current;
+      if (cur.scenarios.length <= 1) return false; // 禁止删除最后一个
+      const removingCurrent = cur.currentScenarioId === sceneId;
+      const remaining = cur.scenarios.filter((s) => s.id !== sceneId);
+      if (remaining.length === cur.scenarios.length) return false;
+      const next: ProjectFile = {
+        ...cur,
+        scenarios: remaining,
+        currentScenarioId: removingCurrent ? remaining[0].id : cur.currentScenarioId,
+      };
+      projectRef.current = next;
+      setProjectState(next);
+      persistProject(next);
+      if (removingCurrent) {
+        loadSnapshot({
+          departments: remaining[0].departments,
+          allEmployeesFlat: remaining[0].allEmployeesFlat,
+          levelConfigs: remaining[0].levelConfigs,
+          canvas: remaining[0].canvas,
+        });
+      }
+      return true;
+    },
+    [loadSnapshot],
+  );
+
+  const renameProject = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const next: ProjectFile = { ...projectRef.current, name: trimmed };
+      projectRef.current = next;
+      setProjectState(next);
+      persistProject(next);
+    },
+    [],
+  );
+
+  /** —— 文件导入 / 导出 —— */
+
+  /** 导出 .orgproj JSON 字符串 */
+  const exportProjectJson = useCallback((): string => {
+    flushCurrent();
+    return serializeProject(projectRef.current);
+  }, [flushCurrent]);
+
+  /** 导入 .orgproj JSON 字符串。成功返回 true。 */
+  const importProjectJson = useCallback(
+    (json: string): boolean => {
+      const parsed = parseProject(json);
+      if (!parsed) return false;
+      projectRef.current = parsed;
+      setProjectState(parsed);
+      persistProject(parsed);
+      const first = getCurrentScenario(parsed);
+      loadSnapshot({
+        departments: first.departments,
+        allEmployeesFlat: first.allEmployeesFlat,
+        levelConfigs: first.levelConfigs,
+        canvas: first.canvas,
+      });
+      return true;
+    },
+    [loadSnapshot],
+  );
+
+  /** 清空当前工作区（重置，保留职级配置偏好） */
+  const resetWorkspace = useCallback(() => {
+    flushCurrent();
+    replaceSnapshot({ departments: [], allEmployeesFlat: [] });
+    setZoomState(100);
+  }, [flushCurrent, replaceSnapshot]);
+
+  return {
+    project,
+    currentScenario,
+    currentScenarioId: project.currentScenarioId,
+    zoom,
+    setZoom: setZoomState,
+    departments,
+    allEmployeesFlat,
+    levelConfigs,
+    saveState,
+    lastSavedAt,
+
+    setDepartments,
+    setAllEmployeesFlat,
+    setBoth,
+
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+
+    switchScenario,
+    createNewScenario,
+    duplicateScenario,
+    renameScenario,
+    deleteScenario,
+    renameProject,
+
+    exportProjectJson,
+    importProjectJson,
+    resetWorkspace,
+    flushCurrent,
+  };
+}

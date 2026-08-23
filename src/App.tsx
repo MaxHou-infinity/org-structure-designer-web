@@ -1,18 +1,22 @@
-import { useState, useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { OrgChart } from './components/OrgChart';
 import { TopBar } from './components/TopBar';
 import { LevelManagerModal } from './components/LevelManagerModal';
+import { HealthDrawer } from './components/HealthDrawer';
+import { ProjectModal } from './components/ProjectModal';
+import { DiagnosticReport } from './components/DiagnosticReport';
 import { Employee, Department, OrgTemplate } from './types';
-import { 
-  parseEmployeeExcel, 
-  parseOrgTemplateExcel, 
-  buildDepartmentTree, 
+import {
+  parseEmployeeExcel,
+  parseOrgTemplateExcel,
+  buildDepartmentTree,
   exportToExcel,
   generateSampleEmployeeTemplate,
   generateSampleOrgTemplate,
 } from './utils/excel';
-import { saveFile } from './utils/tauri';
+import { saveTextFile, saveFile } from './utils/tauri';
+import { useOrgWorkspace } from './utils/useOrgWorkspace';
 
 // 测试数据
 const TEST_EMPLOYEES = [
@@ -51,258 +55,232 @@ function findDept(depts: Department[], id: string): Department | null {
 }
 
 export default function App() {
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [zoom, setZoom] = useState(100);
-  const [allEmployeesFlat, setAllEmployeesFlat] = useState<Employee[]>([]);
+  const ws = useOrgWorkspace();
+  const {
+    departments,
+    allEmployeesFlat,
+    zoom,
+    setZoom,
+    levelConfigs,
+    setDepartments,
+    setBoth,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    switchScenario,
+    createNewScenario,
+    duplicateScenario,
+    renameScenario,
+    deleteScenario,
+    renameProject,
+    exportProjectJson,
+    importProjectJson,
+    resetWorkspace,
+    project,
+    currentScenario,
+    saveState,
+    lastSavedAt,
+    flushCurrent,
+  } = ws;
+
   const [levelManagerOpen, setLevelManagerOpen] = useState(false);
+  const [healthOpen, setHealthOpen] = useState(false);
+  const [healthFocusDeptId, setHealthFocusDeptId] = useState<string | undefined>();
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
-  
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  // 撤销/重做键盘：Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z（或 Ctrl+Y）重做
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        undo();
+      } else if (((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'z') || ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'y')) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [undo, redo]);
+
+  /** —— 文件操作 —— */
   const handleEmployeeFileUpload = useCallback(async (file: File) => {
     try {
       const parsedEmployees = await parseEmployeeExcel(file);
-      setAllEmployeesFlat(parsedEmployees);
-      
-      // 重新构建部门树
-      const newDepartments = buildDepartmentTree(parsedEmployees, []);
-      setDepartments(newDepartments);
+      setBoth(() => ({
+        departments: buildDepartmentTree(parsedEmployees, []),
+        allEmployeesFlat: parsedEmployees,
+      }));
     } catch (error) {
       console.error('解析员工文件失败:', error);
       alert('解析员工文件失败，请检查文件格式');
     }
-  }, []);
-  
+  }, [setBoth]);
+
   const handleOrgTemplateUpload = useCallback(async (file: File) => {
     try {
       const templates = await parseOrgTemplateExcel(file);
-      const newDepartments = buildDepartmentTree(allEmployeesFlat, templates);
-      setDepartments(newDepartments);
+      setDepartments(() => buildDepartmentTree(allEmployeesFlat, templates));
     } catch (error) {
       console.error('解析组织架构文件失败:', error);
       alert('解析组织架构文件失败，请检查文件格式');
     }
-  }, [allEmployeesFlat]);
-  
+  }, [allEmployeesFlat, setDepartments]);
+
+  /** —— 部门/员工操作（历史感知） —— */
   const handleToggleExpand = useCallback((id: string) => {
-    setDepartments(prev => {
+    setDepartments((prev) => {
       const toggle = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === id) {
-            return { ...dept, expanded: !dept.expanded };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: toggle(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === id) return { ...dept, expanded: !dept.expanded };
+          if (dept.children.length > 0) return { ...dept, children: toggle(dept.children) };
           return dept;
         });
       };
       return toggle(prev);
     });
-  }, []);
-  
+  }, [setDepartments]);
+
   const handleUpdateDepartment = useCallback((id: string, name: string) => {
-    setDepartments(prev => {
+    setDepartments((prev) => {
       const update = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === id) {
-            return { ...dept, name };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: update(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === id) return { ...dept, name };
+          if (dept.children.length > 0) return { ...dept, children: update(dept.children) };
           return dept;
         });
       };
       return update(prev);
     });
-  }, []);
-  
+  }, [setDepartments]);
+
   const handleUpdateLeader = useCallback((deptId: string, employee: Employee | null) => {
-    setDepartments(prev => {
+    setDepartments((prev) => {
       const update = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
+        return depts.map((dept) => {
           if (dept.id === deptId) {
-            return { 
-              ...dept, 
+            return {
+              ...dept,
               leaderId: employee?.employeeId || undefined,
-              leaderName: employee?.name || undefined
+              leaderName: employee?.name || undefined,
             };
           }
-          if (dept.children.length > 0) {
-            return { ...dept, children: update(dept.children) };
-          }
+          if (dept.children.length > 0) return { ...dept, children: update(dept.children) };
           return dept;
         });
       };
       return update(prev);
     });
-  }, []);
-  
+  }, [setDepartments]);
+
   const handleMoveEmployee = useCallback((empId: string, fromDeptId: string, toDeptId: string) => {
-    setDepartments(prev => {
+    setDepartments((prev) => {
       let movedEmployee: Employee | null = null;
-      
-      // 从源部门移除员工
       const removeEmployee = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
+        return depts.map((dept) => {
           if (dept.id === fromDeptId) {
-            const emp = dept.employees.find(e => e.id === empId);
-            if (emp) {
-              movedEmployee = emp;
-            }
-            return { 
-              ...dept, 
-              employees: dept.employees.filter(e => e.id !== empId) 
-            };
+            const emp = dept.employees.find((e) => e.id === empId);
+            if (emp) movedEmployee = emp;
+            return { ...dept, employees: dept.employees.filter((e) => e.id !== empId) };
           }
-          if (dept.children.length > 0) {
-            return { ...dept, children: removeEmployee(dept.children) };
-          }
+          if (dept.children.length > 0) return { ...dept, children: removeEmployee(dept.children) };
           return dept;
         });
       };
-      
       let newDepts = removeEmployee(prev);
-      
-      // 将员工添加到目标部门
       if (movedEmployee) {
         const addEmployee = (depts: Department[]): Department[] => {
-          return depts.map(dept => {
-            if (dept.id === toDeptId) {
-              return {
-                ...dept,
-                employees: [...dept.employees, movedEmployee!]
-              };
-            }
-            if (dept.children.length > 0) {
-              return { ...dept, children: addEmployee(dept.children) };
-            }
+          return depts.map((dept) => {
+            if (dept.id === toDeptId) return { ...dept, employees: [...dept.employees, movedEmployee!] };
+            if (dept.children.length > 0) return { ...dept, children: addEmployee(dept.children) };
             return dept;
           });
         };
-        
         newDepts = addEmployee(newDepts);
       }
-      
       return newDepts;
     });
-  }, []);
-  
+  }, [setDepartments]);
+
   const handleDeleteEmployee = useCallback((deptId: string, empId: string) => {
-    setDepartments(prev => {
+    setDepartments((prev) => {
       const remove = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === deptId) {
-            return { 
-              ...dept, 
-              employees: dept.employees.filter(e => e.id !== empId) 
-            };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: remove(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === deptId) return { ...dept, employees: dept.employees.filter((e) => e.id !== empId) };
+          if (dept.children.length > 0) return { ...dept, children: remove(dept.children) };
           return dept;
         });
       };
       return remove(prev);
     });
-  }, []);
-  
+  }, [setDepartments]);
+
   // 移动部门（调整层级结构）- 支持拖到根级别
   const handleMoveDepartment = useCallback((deptId: string, targetDeptId: string | null) => {
-    setDepartments(prev => {
-      let movedDept: Department | undefined = undefined;
-      
-      // 找到要移动的部门并从原位置移除
+    setDepartments((prev) => {
+      let movedDept: Department | undefined;
       const removeDept = (depts: Department[]): Department[] => {
         return depts
-          .map(dept => {
+          .map((dept) => {
             if (dept.id === deptId) {
               movedDept = dept;
               return null;
             }
-            if (dept.children.length > 0) {
-              return { ...dept, children: removeDept(dept.children) };
-            }
+            if (dept.children.length > 0) return { ...dept, children: removeDept(dept.children) };
             return dept;
           })
           .filter((d): d is Department => d !== null);
       };
-      
       let newDepts = removeDept(prev);
-      
       if (movedDept === undefined) return prev;
-      
-      // 如果 targetDeptId 为 null 或 'root'，则将部门移到根级别（平级）
+
       if (!targetDeptId || targetDeptId === 'root') {
-        const updatedDept: Department = Object.assign({}, movedDept, {
-          level: 1,
-          parentId: undefined
-        });
-        
-        // 更新子部门的层级
+        const updatedDept: Department = { ...movedDept, level: 1, parentId: undefined };
         const updateChildLevels = (depts: Department[], baseLevel: number): Department[] => {
-          return depts.map(dept => {
-            if (dept.id === updatedDept.id) {
-              return { ...dept, level: baseLevel };
-            }
-            if (dept.children.length > 0) {
-              return { ...dept, children: updateChildLevels(dept.children, baseLevel + 1) };
-            }
+          return depts.map((dept) => {
+            if (dept.id === updatedDept.id) return { ...dept, level: baseLevel };
+            if (dept.children.length > 0) return { ...dept, children: updateChildLevels(dept.children, baseLevel + 1) };
             return dept;
           });
         };
-        
         return [...newDepts, updateChildLevels([updatedDept], 1)[0]];
       }
-      
-      // 否则，将部门添加到目标部门的孩子中
+
       const targetDept = findDept(newDepts, targetDeptId);
       if (!targetDept) return prev;
-      
       const newLevel = targetDept.level + 1;
-      const newParentId = targetDept.id;
-      
-      const updatedDept: Department = Object.assign({}, movedDept, {
-        level: newLevel,
-        parentId: newParentId
-      });
-      
-      // 将部门添加到目标部门的孩子中
+      const updatedDept: Department = { ...movedDept, level: newLevel, parentId: targetDept.id };
       const addToTarget = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === targetDeptId) {
-            return {
-              ...dept,
-              children: [...dept.children, updatedDept]
-            };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: addToTarget(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === targetDeptId) return { ...dept, children: [...dept.children, updatedDept] };
+          if (dept.children.length > 0) return { ...dept, children: addToTarget(dept.children) };
           return dept;
         });
       };
-      
       newDepts = addToTarget(newDepts);
-      
-      // 递归更新子部门的层级
       const updateChildLevels = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === updatedDept.id) {
-            return { ...dept, level: newLevel };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: updateChildLevels(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === updatedDept.id) return { ...dept, level: newLevel };
+          if (dept.children.length > 0) return { ...dept, children: updateChildLevels(dept.children) };
           return dept;
         });
       };
-      
       return updateChildLevels(newDepts);
     });
-  }, []);
-  
+  }, [setDepartments]);
+
   const handleCreateVirtualEmployee = useCallback((deptId: string) => {
     const newEmployee: Employee = {
       id: `virtual-${Date.now()}`,
@@ -311,78 +289,53 @@ export default function App() {
       level: 'L1.1',
       isVirtual: true,
     };
-    
-    setDepartments(prev => {
+    setBoth((prev) => {
       const add = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === deptId) {
-            return {
-              ...dept,
-              employees: [...dept.employees, newEmployee]
-            };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: add(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === deptId) return { ...dept, employees: [...dept.employees, newEmployee] };
+          if (dept.children.length > 0) return { ...dept, children: add(dept.children) };
           return dept;
         });
       };
-      return add(prev);
+      return { departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, newEmployee] };
     });
-    
-    setAllEmployeesFlat(prev => [...prev, newEmployee]);
-  }, []);
-  
+  }, [setBoth]);
+
   const handleExportPng = useCallback(async () => {
     if (!canvasRef.current) return;
-    
     try {
-      // 懒加载 html2canvas（~200KB），仅导出时按需加载
       const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(canvasRef.current, {
-        backgroundColor: '#F9FAFB',
-        scale: 2,
-        logging: false,
-        useCORS: true,
-      });
-      
+      const canvas = await html2canvas(canvasRef.current, { backgroundColor: '#F9FAFB', scale: 2, logging: false, useCORS: true });
       const dataUrl = canvas.toDataURL('image/png');
-      // 浏览器：base64 → ArrayBuffer；Tauri 端直接保存
       const base64 = dataUrl.split(',')[1];
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      await saveFile('组织架构图.png', bytes, 'image/png');
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const ok = await saveFile('组织架构图.png', bytes, 'image/png');
+      if (ok) showToast('PNG 已导出');
+      else showToast('已取消导出');
     } catch (error) {
       console.error('导出PNG失败:', error);
       alert('导出PNG失败');
     }
-  }, []);
-  
+  }, [showToast]);
+
   const handleExportExcel = useCallback(async () => {
     try {
       await exportToExcel(departments);
+      showToast('Excel 已导出');
     } catch (error) {
       console.error('导出Excel失败:', error);
       alert('导出Excel失败');
     }
-  }, [departments]);
-  
-  // 缩放：按钮 + 画布滚轮共用同一增量逻辑（50-200 边界钳制，UX 最终决策上限 200）
-  const clampZoom = useCallback((z: number) => Math.min(Math.max(z, 50), 200), []);
-  const handleZoomChange = useCallback((next: number) => {
-    setZoom(clampZoom(next));
-  }, [clampZoom]);
-  const handleZoomIn = useCallback(() => {
-    setZoom(z => clampZoom(z + 10));
-  }, [clampZoom]);
-  const handleZoomOut = useCallback(() => {
-    setZoom(z => clampZoom(z - 10));
-  }, [clampZoom]);
+  }, [departments, showToast]);
 
-  // 下载示例模板（Tauri 原生另存为 / 浏览器回退下载）
+  // 缩放：按钮 + 画布滚轮共用同一增量逻辑（50-200 边界钳制）
+  const clampZoom = useCallback((z: number) => Math.min(Math.max(z, 50), 200), []);
+  const handleZoomChange = useCallback((next: number) => setZoom(clampZoom(next)), [clampZoom, setZoom]);
+  const handleZoomIn = useCallback(() => setZoom((z) => clampZoom(z + 10)), [clampZoom, setZoom]);
+  const handleZoomOut = useCallback(() => setZoom((z) => clampZoom(z - 10)), [clampZoom, setZoom]);
+
   const handleDownloadEmployeeTemplate = useCallback(async () => {
     try {
       await generateSampleEmployeeTemplate();
@@ -400,7 +353,7 @@ export default function App() {
       alert('下载组织架构模板失败');
     }
   }, []);
-  
+
   // 创建新部门
   const handleCreateDepartment = useCallback((name: string, level: number, parentId: string | null, leaderId?: string, leaderName?: string) => {
     const newDept: Department = {
@@ -412,41 +365,25 @@ export default function App() {
       employees: [],
       expanded: true,
       leaderId,
-      leaderName
+      leaderName,
     };
-    
-    setDepartments(prev => {
-      if (!parentId || parentId === 'root') {
-        // 添加到根级别，保持用户选择的 level
-        return [...prev, newDept];
-      }
-      
-      // 添加到指定部门的子部门
+    setDepartments((prev) => {
+      if (!parentId || parentId === 'root') return [...prev, newDept];
       const addToParent = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === parentId) {
-            return {
-              ...dept,
-              children: [...dept.children, newDept]
-            };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: addToParent(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === parentId) return { ...dept, children: [...dept.children, newDept] };
+          if (dept.children.length > 0) return { ...dept, children: addToParent(dept.children) };
           return dept;
         });
       };
-      
       return addToParent(prev);
     });
-  }, []);
-  
+  }, [setDepartments]);
+
   // 调整部门层级归属
   const handleChangeDepartmentLevel = useCallback((deptId: string, newLevel: number, newParentId: string | null) => {
-    setDepartments(prev => {
-      // 找到要调整的部门
-      let targetDept: Department | undefined = undefined;
-      
+    setDepartments((prev) => {
+      let targetDept: Department | undefined;
       const findAndRemove = (depts: Department[]): Department[] => {
         for (let i = 0; i < depts.length; i++) {
           if (depts[i].id === deptId) {
@@ -455,69 +392,55 @@ export default function App() {
           }
           if (depts[i].children.length > 0) {
             const newChildren = findAndRemove(depts[i].children);
-            if (targetDept) {
-              return [...depts.slice(0, i), { ...depts[i], children: newChildren }, ...depts.slice(i + 1)];
-            }
+            if (targetDept) return [...depts.slice(0, i), { ...depts[i], children: newChildren }, ...depts.slice(i + 1)];
           }
         }
         return depts;
       };
-      
       const newDepts = findAndRemove(prev);
-      
       if (!targetDept) return prev;
-      
-      // 更新部门信息 - 使用 Object.assign 避免 spread 问题
-      const updatedDept: Department = Object.assign({}, targetDept, {
-        level: newLevel,
-        parentId: newParentId || undefined
-      });
-      
-      // 递归更新子部门层级
+      const updatedDept: Department = { ...targetDept, level: newLevel, parentId: newParentId || undefined };
       const updateChildLevels = (depts: Department[], baseLevel: number): Department[] => {
-        return depts.map(dept => ({
-          ...dept,
-          level: baseLevel,
-          children: updateChildLevels(dept.children, baseLevel + 1)
-        }));
+        return depts.map((dept) => ({ ...dept, level: baseLevel, children: updateChildLevels(dept.children, baseLevel + 1) }));
       };
-      
-      // 如果是根级别
-      if (!newParentId) {
-        return [...newDepts, ...updateChildLevels([updatedDept], newLevel)];
-      }
-      
-      // 添加到目标父部门
+      if (!newParentId) return [...newDepts, ...updateChildLevels([updatedDept], newLevel)];
       const addToParent = (depts: Department[]): Department[] => {
-        return depts.map(dept => {
-          if (dept.id === newParentId) {
-            return {
-              ...dept,
-              children: [...dept.children, ...updateChildLevels([updatedDept], dept.level + 1)]
-            };
-          }
-          if (dept.children.length > 0) {
-            return { ...dept, children: addToParent(dept.children) };
-          }
+        return depts.map((dept) => {
+          if (dept.id === newParentId) return { ...dept, children: [...dept.children, ...updateChildLevels([updatedDept], dept.level + 1)] };
+          if (dept.children.length > 0) return { ...dept, children: addToParent(dept.children) };
           return dept;
         });
       };
-      
       return addToParent(newDepts);
     });
-  }, []);
-  
+  }, [setDepartments]);
+
+  /** 编制人数（健康度 L3 可编辑）；headcount<=0 → 视为未配置（undefined） */
+  const handleUpdateHeadcount = useCallback((deptId: string, value: number) => {
+    setDepartments((prev) => {
+      const update = (depts: Department[]): Department[] => {
+        return depts.map((dept) => {
+          if (dept.id === deptId) {
+            const v = Math.round(value);
+            return { ...dept, headcount: v > 0 ? v : undefined };
+          }
+          if (dept.children.length > 0) return { ...dept, children: update(dept.children) };
+          return dept;
+        });
+      };
+      return update(prev);
+    });
+  }, [setDepartments]);
+
   const handleReset = useCallback(() => {
-    if (confirm('确定要重置所有数据吗？')) {
-      setDepartments([]);
-      setAllEmployeesFlat([]);
-      setZoom(100);
+    if (confirm('确定要清空所有组织数据吗？（职级配置保留）')) {
+      resetWorkspace();
+      showToast('工作区已清空');
     }
-  }, []);
-  
+  }, [resetWorkspace, showToast]);
+
   const handleLoadTestData = useCallback(() => {
-    // 将测试数据转换为员工对象
-    const employees: Employee[] = TEST_EMPLOYEES.map(e => ({
+    const employees: Employee[] = TEST_EMPLOYEES.map((e) => ({
       id: e.employeeId,
       name: e.name,
       employeeId: e.employeeId,
@@ -529,17 +452,69 @@ export default function App() {
       dept5: e.dept5,
       dept6: e.dept6,
     }));
-    
-    setAllEmployeesFlat(employees);
-    
-    // 构建部门树
-    const depts = buildDepartmentTree(employees, TEST_ORG);
-    setDepartments(depts);
+    setBoth(() => ({ departments: buildDepartmentTree(employees, TEST_ORG), allEmployeesFlat: employees }));
+    showToast('已加载示例数据');
+  }, [setBoth, showToast]);
+
+  // 数据备份（导出 .orgproj）
+  const handleExportProject = useCallback(async () => {
+    try {
+      const json = exportProjectJson();
+      const ok = await saveTextFile('组织架构项目.orgproj', json, 'application/json');
+      showToast(ok ? '已导出 .orgproj 项目文件' : '已取消导出');
+    } catch (error) {
+      console.error('导出项目文件失败:', error);
+      showToast('导出项目文件失败');
+    }
+  }, [exportProjectJson, showToast]);
+
+  // 导入 .orgproj
+  const handleImportProject = useCallback((json: string) => {
+    const ok = importProjectJson(json);
+    if (ok) showToast('已导入项目文件');
+    else showToast('导入失败：文件格式无效');
+  }, [importProjectJson, showToast]);
+
+  const handleOpenReport = useCallback(() => {
+    flushCurrent();
+    setReportOpen(true);
+  }, [flushCurrent]);
+
+  const handleOpenHealth = useCallback(() => {
+    setHealthFocusDeptId(undefined);
+    setHealthOpen(true);
   }, []);
-  
+
+  const handleUndo = useCallback(() => {
+    undo();
+    showToast('已撤销');
+  }, [undo, showToast]);
+
+  const handleRedo = useCallback(() => {
+    redo();
+    showToast('已重做');
+  }, [redo, showToast]);
+
   return (
     <div className="flex flex-col h-screen">
       <TopBar
+        projectName={project.name}
+        scenarios={project.scenarios}
+        currentScenarioId={project.currentScenarioId}
+        onSwitchScenario={switchScenario}
+        onCreateScenario={createNewScenario}
+        onRenameScenario={renameScenario}
+        onDeleteScenario={deleteScenario}
+        onDuplicateScenario={duplicateScenario}
+        onManageScenarios={() => setProjectModalOpen(true)}
+        saveState={saveState}
+        lastSavedAt={lastSavedAt}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onOpenHealth={handleOpenHealth}
+        hasData={departments.length > 0}
         onDownloadEmployeeTemplate={handleDownloadEmployeeTemplate}
         onDownloadOrgTemplate={handleDownloadOrgTemplate}
         onManageLevels={() => setLevelManagerOpen(true)}
@@ -559,6 +534,9 @@ export default function App() {
           onReset={handleReset}
           onLoadTestData={handleLoadTestData}
           onCreateDepartment={handleCreateDepartment}
+          onOpenHealth={handleOpenHealth}
+          onOpenReport={handleOpenReport}
+          onExportProject={handleExportProject}
           departments={departments}
           zoom={zoom}
           hasData={departments.length > 0}
@@ -590,9 +568,49 @@ export default function App() {
         </main>
       </div>
 
-      <LevelManagerModal
-        open={levelManagerOpen}
-        onClose={() => setLevelManagerOpen(false)}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2.5 rounded-xl bg-slate-900/90 text-white text-sm font-medium shadow-xl animate-fadeInUp">
+          {toast}
+        </div>
+      )}
+
+      <LevelManagerModal open={levelManagerOpen} onClose={() => setLevelManagerOpen(false)} />
+
+      <HealthDrawer
+        open={healthOpen}
+        onClose={() => setHealthOpen(false)}
+        departments={departments}
+        focusDeptId={healthFocusDeptId}
+        onClearFocus={() => setHealthFocusDeptId(undefined)}
+        onFocusDept={(id) => setHealthFocusDeptId(id)}
+        onUpdateHeadcount={handleUpdateHeadcount}
+        onExportReport={handleOpenReport}
+        currentScenarioName={currentScenario?.name ?? "场景"}
+      />
+
+      <ProjectModal
+        open={projectModalOpen}
+        onClose={() => setProjectModalOpen(false)}
+        project={project}
+        currentScenarioId={project.currentScenarioId}
+        onRenameProject={renameProject}
+        onCreateScenario={createNewScenario}
+        onRenameScenario={renameScenario}
+        onDeleteScenario={deleteScenario}
+        onDuplicateScenario={duplicateScenario}
+        onSwitchScenario={switchScenario}
+        onImport={handleImportProject}
+        onExport={handleExportProject}
+      />
+
+      <DiagnosticReport
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        departments={departments}
+        levelConfigs={levelConfigs}
+        projectName={project.name}
+        scenarioName={currentScenario?.name ?? "场景"}
+        onToast={showToast}
       />
     </div>
   );

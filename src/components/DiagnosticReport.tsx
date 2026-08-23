@@ -1,0 +1,302 @@
+import { useMemo, useRef } from 'react';
+import { ArrowLeft, Printer, Image as ImageIcon } from 'lucide-react';
+import { Department, LevelConfig } from '../types';
+import {
+  computeHealthReport,
+  HEALTH_STATUS_LABEL,
+} from '../utils/analytics';
+import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
+
+interface DiagnosticReportProps {
+  open: boolean;
+  onClose: () => void;
+  departments: Department[];
+  levelConfigs: LevelConfig[];
+  projectName: string;
+  scenarioName: string;
+  onToast: (msg: string) => void;
+}
+
+/** 只读组织架构快照（递归嵌套，非交互，适合打印/导出） */
+function ReportOrgChart({ departments }: { departments: Department[] }) {
+  if (departments.length === 0) {
+    return <div className="text-sm text-slate-400 py-6 text-center">暂无部门数据</div>;
+  }
+  return (
+    <div className="flex flex-wrap gap-3 justify-center">
+      {departments.map((dept) => (
+        <ReportNode key={dept.id} dept={dept} />
+      ))}
+    </div>
+  );
+}
+
+function ReportNode({ dept }: { dept: Department }) {
+  const levelBg: Record<number, string> = {
+    1: 'bg-indigo-50/80 border-l-indigo-400',
+    2: 'bg-emerald-50/80 border-l-emerald-400',
+    3: 'bg-amber-50/80 border-l-amber-400',
+  };
+  return (
+    <div className="flex flex-col items-center">
+      <div
+        className={`rounded-xl border border-slate-100 border-l-4 shadow-sm px-4 py-3 text-center ${
+          levelBg[dept.level] || 'bg-slate-50 border-l-slate-300'
+        }`}
+      >
+        <div className="text-sm font-bold text-slate-800">{dept.name}</div>
+        {dept.leaderName && <div className="text-xs text-slate-500 mt-0.5">负责人 · {dept.leaderName}</div>}
+        <div className="text-xs text-slate-400 mt-1">
+          {dept.employees.length} 人
+          {dept.headcount != null ? ` / 编制 ${dept.headcount}` : ''}
+        </div>
+      </div>
+      {dept.children.length > 0 && (
+        <div className="flex flex-wrap gap-3 mt-3 justify-center border-t-2 border-slate-100 pt-3">
+          {dept.children.map((c) => (
+            <ReportNode key={c.id} dept={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function flattenForDetail(depts: Department[]): Department[] {
+  const out: Department[] = [];
+  const walk = (list: Department[]) => {
+    for (const d of list) {
+      out.push(d);
+      walk(d.children);
+    }
+  };
+  walk(depts);
+  return out;
+}
+
+export function DiagnosticReport({
+  open,
+  onClose,
+  departments,
+  levelConfigs,
+  projectName,
+  scenarioName,
+  onToast,
+}: DiagnosticReportProps) {
+  const reportRef = useRef<HTMLDivElement>(null);
+  const report = useMemo(
+    () => computeHealthReport(departments, levelConfigs),
+    [departments, levelConfigs],
+  );
+
+  const generatedAt = useMemo(
+    () => new Date().toLocaleString('zh-CN', { dateStyle: 'long', timeStyle: 'short' }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open],
+  );
+
+  if (!open) return null;
+
+  const flat = flattenForDetail(departments);
+  const summary = report.summary;
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleExportPng = async () => {
+    if (!reportRef.current) return;
+    try {
+      const { default: html2canvas } = await import('html2canvas');
+      const canvas = await html2canvas(reportRef.current, {
+        backgroundColor: '#FFFFFF',
+        scale: 2,
+        logging: false,
+        useCORS: true,
+      });
+      const dataUrl = canvas.toDataURL('image/png');
+      const base64 = dataUrl.split(',')[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const { saveFile } = await import('../utils/tauri');
+      const ok = await saveFile(`诊断报告-${scenarioName}.png`, bytes, 'image/png');
+      onToast(ok ? 'PNG 已导出' : '已取消导出');
+    } catch (error) {
+      console.error('导出报告PNG失败:', error);
+      onToast('导出报告PNG失败');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-white/95 backdrop-blur-lg overflow-y-auto">
+      {/* 顶部工具条（打印时隐藏） */}
+      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-100 px-6 py-3 flex items-center justify-between no-print">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onClose}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 hover:bg-slate-100 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            返回编辑
+          </button>
+          <span className="text-sm font-semibold text-slate-800">诊断报告</span>
+          <span className="text-xs text-slate-400">场景：{scenarioName}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportPng}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors"
+          >
+            <ImageIcon className="w-4 h-4" />
+            导出PNG
+          </button>
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md hover:shadow-lg transition-all"
+          >
+            <Printer className="w-4 h-4" />
+            打印/导出PDF
+          </button>
+        </div>
+      </div>
+
+      {/* 报告正文 */}
+      <div ref={reportRef} className="max-w-5xl mx-auto px-6 py-8 space-y-8 bg-white">
+        {/* 报告头部 */}
+        <header className="border-b-2 border-slate-900 pb-4">
+          <h1 className="text-2xl font-bold text-slate-900">组织架构诊断报告</h1>
+          <div className="flex gap-4 mt-2 text-xs text-slate-500">
+            <span>项目：{projectName}</span>
+            <span>场景：{scenarioName}</span>
+            <span>生成时间：{generatedAt}</span>
+          </div>
+        </header>
+
+        {/* 摘要指标卡 */}
+        <section>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className={`rounded-2xl border ${STATUS_STYLE[summary.overall].border} ${STATUS_STYLE[summary.overall].bg} shadow-soft p-4`}>
+              <div className="text-xs text-slate-500">整体健康度</div>
+              <div className={`text-2xl font-bold ${STATUS_STYLE[summary.overall].text}`}>
+                {HEALTH_STATUS_LABEL[summary.overall]}
+              </div>
+              <div className="text-xs text-slate-400 mt-1">红{summary.red} 黄{summary.yellow} 绿{summary.green}</div>
+            </div>
+            <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
+              <div className="text-xs text-slate-500">总人数</div>
+              <div className="text-2xl font-bold text-slate-900">{report.totals.totalEmployees}</div>
+              <div className="text-xs text-slate-400 mt-1">不含虚拟兼岗</div>
+            </div>
+            <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
+              <div className="text-xs text-slate-500">部门数</div>
+              <div className="text-2xl font-bold text-slate-900">{report.totals.totalDepartments}</div>
+              <div className="text-xs text-slate-400 mt-1">全组织节点</div>
+            </div>
+            <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
+              <div className="text-xs text-slate-500">编制缺口</div>
+              <div className={`text-2xl font-bold ${report.totals.totalGap > 0 ? 'text-amber-600' : report.totals.totalGap < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                {report.totals.totalGap > 0 ? `+${report.totals.totalGap}` : report.totals.totalGap}
+              </div>
+              <div className="text-xs text-slate-400 mt-1">正=空岗 负=超编</div>
+            </div>
+            <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
+              <div className="text-xs text-slate-500">月人力成本</div>
+              <div className="text-2xl font-bold text-slate-900">{fmtCost(report.totals.totalCost)}</div>
+              <div className="text-xs text-slate-400 mt-1">按职级成本映射</div>
+            </div>
+          </div>
+        </section>
+
+        {/* 健康度指标 */}
+        <section>
+          <h2 className="text-base font-bold text-slate-900 mb-3">健康度指标</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {report.l2.map((m) => (
+              <div key={m.key} className={`rounded-2xl border ${STATUS_STYLE[m.status].border} ${STATUS_STYLE[m.status].bg} shadow-soft p-4`}>
+                <div className="text-xs text-slate-500">{m.label}</div>
+                <div className={`text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>{fmt(m.value, m.unit)}</div>
+                <div className="text-xs text-slate-400 mt-1 leading-snug">{m.verdict}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-sm text-slate-700 mt-3">{summary.diagnosis}</p>
+        </section>
+
+        {/* 组织架构图（只读） */}
+        <section className="report-section">
+          <h2 className="text-base font-bold text-slate-900 mb-3">组织架构图</h2>
+          <div className="rounded-2xl border border-slate-100 shadow-soft p-6 report-orgchart">
+            <ReportOrgChart departments={departments} />
+          </div>
+        </section>
+
+        {/* 部门明细表 */}
+        <section className="report-section">
+          <h2 className="text-base font-bold text-slate-900 mb-3">部门明细</h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
+                <th className="text-left py-2 font-medium">部门</th>
+                <th className="text-left py-2 font-medium">层级</th>
+                <th className="text-left py-2 font-medium">负责人</th>
+                <th className="text-right py-2 font-medium">人数</th>
+                <th className="text-right py-2 font-medium">编制</th>
+                <th className="text-right py-2 font-medium">缺口</th>
+                <th className="text-left py-2 font-medium">职级分布</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flat.map((d) => {
+                const dist = Object.entries(
+                  d.employees.reduce<Record<string, number>>((agg, e) => {
+                    agg[e.level] = (agg[e.level] || 0) + 1;
+                    return agg;
+                  }, {}),
+                )
+                  .map(([k, n]) => `${k}×${n}`)
+                  .join(', ');
+                return (
+                  <tr key={d.id} className="border-b border-slate-100">
+                    <td className="py-2 text-slate-700">
+                      <span className="mr-1 text-slate-300">{'　'.repeat(Math.min(d.level - 1, 3))}{d.level > 1 && '└ '}</span>
+                      {d.name}
+                    </td>
+                    <td className="py-2 text-slate-500">L{d.level}</td>
+                    <td className="py-2 text-slate-600">{d.leaderName || '—'}</td>
+                    <td className="py-2 text-right text-slate-700">{d.employees.length}</td>
+                    <td className="py-2 text-right text-slate-600">{d.headcount ?? '—'}</td>
+                    <td className="py-2 text-right text-slate-600">
+                      {d.headcount == null ? '—' : (d.headcount - d.employees.length)}
+                    </td>
+                    <td className="py-2 text-slate-500">{dist || '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+
+        {/* 诊断建议 */}
+        <section className="report-section">
+          <h2 className="text-base font-bold text-slate-900 mb-3">诊断建议</h2>
+          <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
+            <ul className="list-disc list-inside space-y-1.5 text-sm text-slate-700">
+              {report.l2.map((m) => (
+                <li key={m.key}>
+                  <span className="font-medium">{m.label}（{HEALTH_STATUS_LABEL[m.status]}）</span>
+                  ：{m.verdict}
+                </li>
+              ))}
+            </ul>
+            <p className="text-sm text-slate-600 mt-3">{summary.diagnosis}</p>
+          </div>
+        </section>
+
+        <footer className="text-xs text-slate-400 text-center pt-4 border-t border-slate-100">
+          由组织架构设计器 v2.0.2 生成 · {projectName} · {scenarioName} · {generatedAt}
+        </footer>
+      </div>
+    </div>
+  );
+}

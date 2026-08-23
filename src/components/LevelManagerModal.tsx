@@ -83,6 +83,7 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
         number: normalizeLevelNumber(d.number),
         label: d.label.trim(),
         color: d.color || autoColor(fullCode(d)),
+        cost: typeof d.cost === 'number' && Number.isFinite(d.cost) ? d.cost : undefined,
       })),
     );
     setErrors({});
@@ -175,6 +176,19 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
                     placeholder="中文标签，如 初级专员"
                     maxLength={20}
                   />
+                  {/* 月均成本 */}
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={d.cost ?? ''}
+                      onChange={(e) => updateDraft(i, { cost: e.target.value === '' ? undefined : Number(e.target.value) })}
+                      className="w-16 px-2 py-1.5 rounded-lg text-sm text-slate-700 focus-ring border border-slate-200"
+                      placeholder="成本"
+                    />
+                    <span className="text-[10px] text-slate-400 w-6">w</span>
+                  </div>
                   {/* 颜色 */}
                   <div className="flex items-center gap-1.5">
                     <input

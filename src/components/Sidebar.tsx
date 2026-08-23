@@ -1,4 +1,4 @@
-import { Upload, Download, FileSpreadsheet, Image, Plus, Minus, RefreshCw, Building2 } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, Image, Plus, Minus, RefreshCw, Building2, Activity, FileJson, FileText } from 'lucide-react';
 import { Department } from '../types';
 import { useState } from 'react';
 import { useLevelConfigs, fullCode, levelFullLabel } from '../utils/levels';
@@ -13,6 +13,9 @@ interface SidebarProps {
   onReset: () => void;
   onLoadTestData: () => void;
   onCreateDepartment: (name: string, level: number, parentId: string | null, leaderId?: string, leaderName?: string) => void;
+  onOpenHealth: () => void;
+  onOpenReport: () => void;
+  onExportProject: () => void;
   departments: Department[];
   zoom: number;
   hasData: boolean;
@@ -28,6 +31,9 @@ export function Sidebar({
   onReset,
   onLoadTestData,
   onCreateDepartment,
+  onOpenHealth,
+  onOpenReport,
+  onExportProject,
   departments,
   zoom,
   hasData,
@@ -165,6 +171,40 @@ export function Sidebar({
             >
               <FileSpreadsheet className="w-4 h-4" />
               导出Excel
+            </button>
+          </div>
+        </div>
+
+        {/* 分析 & 备份 */}
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+            <Activity className="w-4 h-4 text-indigo-500" />
+            分析 & 备份
+          </h2>
+          <div className="space-y-2">
+            <button
+              onClick={onOpenHealth}
+              disabled={!hasData}
+              className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-purple-500 text-white rounded-xl hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
+              <Activity className="w-4 h-4" />
+              组织健康度
+            </button>
+            <button
+              onClick={onOpenReport}
+              disabled={!hasData}
+              className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <FileText className="w-4 h-4" />
+              诊断报告
+            </button>
+            <button
+              onClick={onExportProject}
+              disabled={!hasData}
+              className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <FileJson className="w-4 h-4" />
+              数据备份 (.orgproj)
             </button>
           </div>
         </div>

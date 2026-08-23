@@ -48,3 +48,12 @@ export async function saveFile(
   URL.revokeObjectURL(url);
   return true;
 }
+
+/** 保存文本文件（.orgproj JSON / 报告 HTML 等）：Tauri 原生另存为，浏览器回退下载。 */
+export async function saveTextFile(
+  defaultName: string,
+  text: string,
+  mimeType = 'application/json',
+): Promise<boolean> {
+  return saveFile(defaultName, new TextEncoder().encode(text), mimeType);
+}
