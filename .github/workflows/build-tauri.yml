@@ -21,9 +21,6 @@ jobs:
           # Windows
           - platform: windows-latest
             args: ''
-          # Linux
-          - platform: ubuntu-22.04
-            args: ''
 
     runs-on: ${{ matrix.platform }}
 
@@ -41,12 +38,6 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
 
-      - name: 安装 Linux 系统依赖
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
-
       - name: 安装前端依赖
         run: npm ci
 
@@ -62,7 +53,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: '组织罗盘 OrgCompass ${{ github.ref_name }}'
-          releaseBody: 'OrgCompass 多平台安装包（由 GitHub Actions 自动构建）'
+          releaseBody: 'OrgCompass macOS + Windows 安装包（由 GitHub Actions 自动构建）'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
