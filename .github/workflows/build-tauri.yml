@@ -61,8 +61,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: '组织架构设计工具 ${{ github.ref_name }}'
-          releaseBody: '自动构建的多平台安装包（由 GitHub Actions 生成）'
+          releaseName: '组织罗盘 OrgCompass ${{ github.ref_name }}'
+          releaseBody: 'OrgCompass 多平台安装包（由 GitHub Actions 自动构建）'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

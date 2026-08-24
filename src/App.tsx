@@ -1,4 +1,5 @@
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { OrgChart } from './components/OrgChart';
 import { TopBar } from './components/TopBar';
@@ -8,6 +9,8 @@ import { ProjectModal } from './components/ProjectModal';
 import { DiagnosticReport } from './components/DiagnosticReport';
 import { SearchModal } from './components/SearchModal';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
+import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
+import { computeUnassignedEmployees } from './utils/analytics';
 import { SearchHighlight } from './components/SearchContext';
 import { Employee, Department, OrgTemplate } from './types';
 import { expandDepartments, SearchMatch } from './utils/search';
@@ -101,6 +104,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchHighlight, setSearchHighlight] = useState<SearchHighlight>(EMPTY_HIGHLIGHT);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [unassignedOpen, setUnassignedOpen] = useState(false);
   // v2.0.3 修复：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构
   const [orgTemplates, setOrgTemplates] = useState<OrgTemplate[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -267,6 +271,53 @@ export default function App() {
   const handleMoveMultiple = useCallback((empIds: string[], toDeptId: string) => {
     setDepartments((prev) => moveEmployeesBetween(prev, empIds, toDeptId));
   }, [setDepartments]);
+
+  /** 未入架构员工（v2.0.5）：全量员工 vs 树内已挂载员工的差值 */
+  const unassignedEmployees = useMemo(
+    () => computeUnassignedEmployees(allEmployeesFlat, departments),
+    [allEmployeesFlat, departments],
+  );
+
+  /** 将未入架构员工排入指定部门（历史感知） */
+  const handlePlaceEmployee = useCallback(
+    (empId: string, deptId: string) => {
+      const emp = allEmployeesFlat.find((e) => e.id === empId);
+      if (!emp) return;
+      setDepartments((prev) => {
+        const add = (depts: Department[]): Department[] => {
+          return depts.map((dept) => {
+            if (dept.id === deptId) return { ...dept, employees: [...dept.employees, emp] };
+            if (dept.children.length > 0) return { ...dept, children: add(dept.children) };
+            return dept;
+          });
+        };
+        return add(prev);
+      });
+    },
+    [allEmployeesFlat, setDepartments],
+  );
+
+  /** 设置/清除员工目标职级（v2.0.5：员工层职级差距红黄绿） */
+  const handleSetTargetLevel = useCallback(
+    (empId: string, target: string) => {
+      const t = target.trim();
+      setBoth((prev) => {
+        const updateEmp = (e: Employee) => (e.id === empId ? { ...e, targetLevel: t ? t : undefined } : e);
+        const updateDepts = (depts: Department[]): Department[] =>
+          depts.map((d) => ({
+            ...d,
+            employees: d.employees.map(updateEmp),
+            children: updateDepts(d.children),
+          }));
+        return {
+          departments: updateDepts(prev.departments),
+          allEmployeesFlat: prev.allEmployeesFlat.map(updateEmp),
+        };
+      });
+      showToast(t ? `已设置目标职级 ${t}` : '已清除目标职级');
+    },
+    [setBoth, showToast],
+  );
 
   /** 搜索结果跳转：展开命中祖先链 + 滚动定位到实体 */
   const handleSearchJump = useCallback((match: SearchMatch) => {
@@ -655,9 +706,21 @@ export default function App() {
             onLoadTestData={handleLoadTestData}
             onLoadIndustryTemplate={() => handleLoadIndustryTemplate('internet')}
             searchHighlight={searchHighlight}
+            onSetTargetLevel={handleSetTargetLevel}
           />
         </main>
       </div>
+
+      {unassignedEmployees.length > 0 && departments.length > 0 && (
+        <button
+          onClick={() => setUnassignedOpen(true)}
+          className="fixed top-16 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-50/95 backdrop-blur border border-amber-300/70 text-amber-800 shadow-lg text-sm font-medium hover:bg-amber-100 transition-colors animate-fadeInUp"
+        >
+          <AlertTriangle className="w-4 h-4" />
+          {unassignedEmployees.length} 名员工未进入架构
+          <span className="text-xs text-amber-600 underline underline-offset-2">查看并排入</span>
+        </button>
+      )}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2.5 rounded-xl bg-slate-900/90 text-white text-sm font-medium shadow-xl animate-fadeInUp">
@@ -711,6 +774,15 @@ export default function App() {
         onHighlight={setSearchHighlight}
         onClearHighlight={handleSearchClearHighlight}
         onJump={handleSearchJump}
+      />
+
+      <UnassignedEmployeesDrawer
+        open={unassignedOpen}
+        onClose={() => setUnassignedOpen(false)}
+        unassignedEmployees={unassignedEmployees}
+        departments={departments}
+        onPlaceEmployee={handlePlaceEmployee}
+        onToast={showToast}
       />
 
       <OnboardingOverlay

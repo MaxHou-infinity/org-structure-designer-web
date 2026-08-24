@@ -5,6 +5,7 @@ import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
 import { useSearchHighlight } from './SearchContext';
+import { employeeLevelGap } from '../utils/analytics';
 
 interface DepartmentCardProps {
   department: Department;
@@ -19,6 +20,7 @@ interface DepartmentCardProps {
   selectedEmpIds?: Set<string>;
   /** 点击员工切换选中（additive=Shift 加成选） */
   onToggleSelectEmp?: (empId: string, additive: boolean) => void;
+  onSetTargetLevel: (empId: string, target: string) => void;
 }
 
 function DraggableEmployee({ 
@@ -61,6 +63,24 @@ function DraggableEmployee({
       <User className="w-3 h-3" style={{ color: levelColor }} />
       <span className="truncate flex-1">{employee.name}</span>
       <span className="text-[10px]" style={{ color: levelColor }}>{employee.level}</span>
+      {(() => {
+        const gap = employeeLevelGap(employee);
+        if (!gap) return null;
+        const cls =
+          gap.status === 'healthy'
+            ? 'bg-emerald-100 text-emerald-600'
+            : gap.status === 'warn'
+              ? 'bg-amber-100 text-amber-600'
+              : 'bg-red-100 text-red-600';
+        return (
+          <span
+            className={`text-[10px] px-1 rounded font-medium ${cls}`}
+            title={`目标 ${employee.targetLevel} · ${gap.label}`}
+          >
+            {gap.gap > 0 ? `+${gap.gap}` : gap.gap}
+          </span>
+        );
+      })()}
       {employee.isVirtual && (
         <span className="text-[10px] text-blue-500 font-medium">(兼)</span>
       )}
@@ -73,13 +93,15 @@ function EmployeeList({
   onDelete,
   canDelete,
   selectedEmpIds,
-  onSelect
+  onSelect,
+  onSetTargetLevel
 }: { 
   employees: Employee[];
   onDelete: (empId: string) => void;
   canDelete: boolean;
   selectedEmpIds?: Set<string>;
   onSelect?: (empId: string, additive: boolean) => void;
+  onSetTargetLevel?: (empId: string, target: string) => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; empId: string } | null>(null);
   
@@ -112,6 +134,17 @@ function EmployeeList({
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
+                  className="w-full px-4 py-1 text-left text-sm hover:bg-gray-100 text-slate-700"
+                  onClick={() => {
+                    const t = window.prompt('输入目标职级（如 L2.1，留空清除）', emp.targetLevel ?? '');
+                    if (t === null) return;
+                    onSetTargetLevel?.(emp.id, t);
+                    setContextMenu(null);
+                  }}
+                >
+                  设置目标职级
+                </button>
+                <button
                   className="w-full px-4 py-1 text-left text-sm hover:bg-gray-100 text-red-500"
                   onClick={() => {
                     onDelete(emp.id);
@@ -138,6 +171,7 @@ export function DepartmentCard({
   onDeleteEmployee,
   onCreateVirtualEmployee,
   onChangeDepartmentLevel,
+  onSetTargetLevel,
   allEmployees,
   selectedEmpIds,
   onToggleSelectEmp,
@@ -357,6 +391,7 @@ export function DepartmentCard({
               canDelete={true}
               selectedEmpIds={selectedEmpIds}
               onSelect={onToggleSelectEmp}
+              onSetTargetLevel={onSetTargetLevel}
             />
           ) : (
             <div className="text-xs text-gray-400 text-center py-2">

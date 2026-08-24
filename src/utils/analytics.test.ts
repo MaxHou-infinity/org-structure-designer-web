@@ -10,6 +10,8 @@ import {
   generateSuggestions,
   generateDeptSuggestions,
   collectAllSuggestions,
+  computeUnassignedEmployees,
+  employeeLevelGap,
   DEFAULT_HEALTH_THRESHOLDS,
   getHealthThresholds,
   setHealthThresholds,
@@ -713,5 +715,42 @@ describe('computeL1 接受阈值参数（可配置化缺口）', () => {
     // 自定义放宽空岗阈值：60% ≤ 90 → healthy
     const loose: HealthThresholds = { ...DEFAULT_HEALTH_THRESHOLDS, vacancyHealthyMax: 90, vacancyWarnMax: 95 };
     expect(computeL1([root], loose)[0].status).toBe('healthy');
+  });
+});
+
+describe('v2.0.5 未入架构员工 & 员工职级差距', () => {
+  it('computeUnassignedEmployees 返回未挂载到任何部门的员工', () => {
+    const e1 = emp('e1', 'L1.1');
+    const e2 = emp('e2', 'L1.2');
+    const e3 = emp('e3', 'L2.1');
+    const root = dept('d1', '技术部', 1, { employees: [e1, e2], children: [] });
+    expect(computeUnassignedEmployees([e1, e2, e3], [root]).map((e) => e.id)).toEqual(['e3']);
+  });
+
+  it('computeUnassignedEmployees 递归统计子部门已挂载员工', () => {
+    const e1 = emp('e1', 'L1.1');
+    const child = dept('c', '研发组', 2, { employees: [e1] });
+    const root = dept('d1', '技术部', 1, { children: [child] });
+    expect(computeUnassignedEmployees([e1], [root]).length).toBe(0);
+  });
+
+  it('employeeLevelGap 未设置 targetLevel 返回 null', () => {
+    expect(employeeLevelGap(emp('e', 'L1.1'))).toBeNull();
+  });
+
+  it('employeeLevelGap 目标高于当前 → 差距与灯号', () => {
+    const g1 = employeeLevelGap(emp('e', 'L1.1', { targetLevel: 'L2.1' }));
+    expect(g1).not.toBeNull();
+    expect(g1!.gap).toBe(1);
+    expect(g1!.status).toBe('warn');
+    const g2 = employeeLevelGap(emp('e', 'L1.1', { targetLevel: 'L3.2' }));
+    expect(g2!.gap).toBeCloseTo(2.1, 1);
+    expect(g2!.status).toBe('danger');
+  });
+
+  it('employeeLevelGap 达到/超出目标 → healthy', () => {
+    const g = employeeLevelGap(emp('e', 'L2.1', { targetLevel: 'L1.1' }));
+    expect(g).not.toBeNull();
+    expect(g!.status).toBe('healthy');
   });
 });

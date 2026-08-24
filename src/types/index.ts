@@ -12,6 +12,8 @@ export interface Employee {
   isVirtual?: boolean;
   /** 个人月均成本（可选；L3 成本分析用）。缺省时降级按职级成本映射核算。 */
   cost?: number;
+  /** 目标职级（可选；员工层职级差距红黄绿分析用）。 */
+  targetLevel?: string;
 }
 
 export interface Department {

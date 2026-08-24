@@ -3,7 +3,9 @@ import { ArrowLeft, Printer, Image as ImageIcon } from 'lucide-react';
 import { Department, LevelConfig } from '../types';
 import {
   computeHealthReport,
+  collectAllSuggestions,
   HEALTH_STATUS_LABEL,
+  SuggestionSeverity,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 
@@ -74,6 +76,19 @@ function flattenForDetail(depts: Department[]): Department[] {
   return out;
 }
 
+const SEV_LABEL: Record<SuggestionSeverity, string> = {
+  critical: '关键',
+  major: '建议',
+  minor: '提示',
+  info: '信息',
+};
+const SEV_STYLE: Record<SuggestionSeverity, string> = {
+  critical: 'bg-red-50 text-red-600 ring-red-200',
+  major: 'bg-amber-50 text-amber-600 ring-amber-200',
+  minor: 'bg-slate-50 text-slate-500 ring-slate-200',
+  info: 'bg-slate-50 text-slate-500 ring-slate-200',
+};
+
 export function DiagnosticReport({
   open,
   onClose,
@@ -87,6 +102,11 @@ export function DiagnosticReport({
   const report = useMemo(
     () => computeHealthReport(departments, levelConfigs),
     [departments, levelConfigs],
+  );
+
+  const suggestions = useMemo(
+    () => collectAllSuggestions(report, departments),
+    [report, departments],
   );
 
   const generatedAt = useMemo(
@@ -277,24 +297,35 @@ export function DiagnosticReport({
           </table>
         </section>
 
-        {/* 诊断建议 */}
+        {/* 诊断建议 / 组织优化建议 */}
         <section className="report-section">
-          <h2 className="text-base font-bold text-slate-900 mb-3">诊断建议</h2>
+          <h2 className="text-base font-bold text-slate-900 mb-3">组织优化建议</h2>
           <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
-            <ul className="list-disc list-inside space-y-1.5 text-sm text-slate-700">
-              {report.l2.map((m) => (
-                <li key={m.key}>
-                  <span className="font-medium">{m.label}（{HEALTH_STATUS_LABEL[m.status]}）</span>
-                  ：{m.verdict}
-                </li>
-              ))}
-            </ul>
-            <p className="text-sm text-slate-600 mt-3">{summary.diagnosis}</p>
+            {suggestions.length === 0 ? (
+              <p className="text-sm text-slate-600">组织结构较为健康，暂无优化建议。</p>
+            ) : (
+              <ul className="space-y-2 text-sm text-slate-700">
+                {suggestions.slice(0, 30).map((s) => (
+                  <li key={s.id} className="flex items-start gap-2">
+                    <span
+                      className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full ring-1 font-medium ${SEV_STYLE[s.severity]}`}
+                    >
+                      {SEV_LABEL[s.severity]}
+                    </span>
+                    <span>
+                      <span className="font-medium">{s.deptName ? `${s.deptName} · ` : ''}{s.title}</span>
+                      <span className="text-slate-500">：{s.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-sm text-slate-600 mt-4">{summary.diagnosis}</p>
           </div>
         </section>
 
         <footer className="text-xs text-slate-400 text-center pt-4 border-t border-slate-100">
-          由组织罗盘 OrgCompass v2.0.4 生成 · {projectName} · {scenarioName} · {generatedAt}
+          由组织罗盘 OrgCompass v2.0.5 生成 · {projectName} · {scenarioName} · {generatedAt}
         </footer>
       </div>
     </div>

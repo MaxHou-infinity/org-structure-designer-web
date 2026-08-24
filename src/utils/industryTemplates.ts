@@ -157,12 +157,39 @@ const HOSPITAL = {
   ],
 };
 
+/** 教育服务 */
+const EDUCATION = {
+  id: 'education',
+  name: '教育服务',
+  description: '教育集团组织：教学 / 教务 / 行政 / 校区，事业部分权',
+  accent: '#8b5cf6',
+  icon: 'GraduationCap',
+  employees: [
+    emp('e1', '王校长', 'E001', 'L5', ['教育集团']),
+    emp('e2', '李教学总监', 'E002', 'L4.1', ['教育集团', '教学中心']),
+    emp('e3', '张语文组长', 'E003', 'L3.2', ['教育集团', '教学中心', '语文组']),
+    emp('e4', '刘数学组长', 'E004', 'L3.2', ['教育集团', '教学中心', '数学组']),
+    emp('e5', '陈教务主任', 'E005', 'L3.1', ['教育集团', '教务部']),
+    emp('e6', '赵行政主任', 'E006', 'L3.1', ['教育集团', '行政部']),
+    emp('e7', '周校区主任', 'E007', 'L3.2', ['教育集团', '校区']),
+    emp('e8', '吴招生专员', 'E008', 'L2.2', ['教育集团', '校区', '招生组']),
+  ],
+  orgTemplates: [
+    org({ depts: ['教育集团'], deptLevel: '1', leaderId: 'E001', leaderName: '王校长' }),
+    org({ depts: ['教育集团', '教学中心'], deptLevel: '2', leaderId: 'E002', leaderName: '李教学总监' }),
+    org({ depts: ['教育集团', '教务部'], deptLevel: '2', leaderId: 'E005', leaderName: '陈教务主任' }),
+    org({ depts: ['教育集团', '行政部'], deptLevel: '2', leaderId: 'E006', leaderName: '赵行政主任' }),
+    org({ depts: ['教育集团', '校区'], deptLevel: '2', leaderId: 'E007', leaderName: '周校区主任' }),
+  ],
+};
+
 /** 全部内置模板（顺序即下拉展示顺序） */
 export const INDUSTRY_TEMPLATES: IndustryTemplate[] = [
   INTERNET,
   MANUFACTURING,
   RETAIL,
   HOSPITAL,
+  EDUCATION,
 ];
 
 /** 载入内置模板，复用 buildDepartmentTree 生成组织树与员工扁平列表。 */

@@ -771,3 +771,52 @@ export function collectAllSuggestions(
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.title.localeCompare(b.title, 'zh-CN'),
   );
 }
+
+/** —— v2.0.5：未入架构员工 & 员工职级差距 —— */
+
+/** 解析职级码中的数字部分（如 'L1.1' → 1.1；'L5' → 5）。解析失败返回 null。 */
+function parseLevelNumber(code: string): number | null {
+  const num = code.replace(/^[A-Za-z]+/, '').trim();
+  if (!num) return null;
+  const n = Number.parseFloat(num);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** 员工职级差距灯（红黄绿）：targetLevel 相对当前 level 的差距。 */
+export interface EmployeeLevelGap {
+  comparable: boolean;
+  current: number;
+  target: number;
+  /** target - current；正=当前低于目标（需提升） */
+  gap: number;
+  status: HealthStatus;
+  label: string;
+}
+
+/**
+ * 计算员工职级差距。仅当员工设置了 targetLevel 且可解析时返回非 null。
+ * 跨度按数字部分计算（L1.1 vs L2.1 → gap 1）。status: 达到/超出(healthy) <1级(warn) ≥1级(danger)。
+ */
+export function employeeLevelGap(emp: Employee): EmployeeLevelGap | null {
+  if (!emp.targetLevel) return null;
+  const current = parseLevelNumber(emp.level);
+  const target = parseLevelNumber(emp.targetLevel);
+  if (current == null || target == null) return null;
+  const gap = Math.round((target - current) * 10) / 10;
+  const status: HealthStatus = gap <= 0 ? 'healthy' : gap <= 1 ? 'warn' : 'danger';
+  const label = gap <= 0 ? '达到/超出目标' : gap <= 1 ? '接近目标' : '有明显差距';
+  return { comparable: true, current, target, gap, status, label };
+}
+
+/** 计算未进入组织树（未挂载到任何部门员工列表）的员工。 */
+export function computeUnassignedEmployees(allEmployees: Employee[], departments: Department[]): Employee[] {
+  const placed = new Set<string>();
+  const walk = (depts: Department[]) => {
+    for (const d of depts) {
+      for (const e of d.employees) placed.add(e.id);
+      walk(d.children);
+    }
+  };
+  walk(departments);
+  return allEmployees.filter((e) => !placed.has(e.id));
+}

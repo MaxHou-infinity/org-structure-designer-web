@@ -4,6 +4,7 @@ import { Scenario } from '../types';
 import { SaveState } from '../utils/useOrgWorkspace';
 import { ScenarioSwitcher } from './ScenarioSwitcher';
 import { INDUSTRY_TEMPLATES } from '../utils/industryTemplates';
+import { TemplatePreviewModal } from './TemplatePreviewModal';
 
 interface TopBarProps {
   projectName: string;
@@ -76,6 +77,7 @@ export function TopBar({
 }: TopBarProps) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const toolsRef = useRef<HTMLDivElement>(null);
   const templatesRef = useRef<HTMLDivElement>(null);
 
@@ -93,6 +95,7 @@ export function TopBar({
   }, []);
 
   return (
+    <>
     <header className="h-14 flex items-center justify-between px-5 border-b border-white/40 bg-white/70 backdrop-blur-xl shadow-soft z-20">
       {/* 左区：品牌 + 项目名 + 场景切换 + 保存状态 */}
       <div className="flex items-center gap-4 min-w-0">
@@ -103,7 +106,7 @@ export function TopBar({
           <div className="leading-tight">
             <div className="flex items-center gap-2">
               <span className="text-[15px] font-bold text-slate-900 tracking-tight">组织罗盘</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.4</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.5</span>
             </div>
             <div className="text-[10px] text-slate-500 tracking-wide">OrgCompass</div>
           </div>
@@ -216,6 +219,15 @@ export function TopBar({
             </div>
           )}
         </div>
+
+        <button
+          onClick={() => setPreviewOpen(true)}
+          className="hidden xl:flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+          title="预览行业模板"
+        >
+          <LayoutTemplate className="w-4 h-4" />
+          预览
+        </button>
       </div>
 
       {/* 右区：缩放 + 撤销/重做 + 健康度 + 职级管理 */}
@@ -291,5 +303,12 @@ export function TopBar({
         </button>
       </div>
     </header>
+
+    <TemplatePreviewModal
+      open={previewOpen}
+      onClose={() => setPreviewOpen(false)}
+      onLoadTemplate={onLoadIndustryTemplate}
+    />
+    </>
   );
 }

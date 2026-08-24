@@ -18,6 +18,7 @@ interface OrgChartProps {
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
   onCreateVirtualEmployee: (deptId: string) => void;
+  onSetTargetLevel: (empId: string, target: string) => void;
   allEmployees: Employee[];
   zoom: number;
   canvasRef: React.RefObject<HTMLDivElement>;
@@ -200,6 +201,7 @@ const renderTreeRecursive = (
   onDeleteEmployee: (deptId: string, empId: string) => void,
   onCreateVirtualEmployee: (deptId: string) => void,
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void,
+  onSetTargetLevel: (empId: string, target: string) => void,
   allEmployees: Employee[],
   selectedEmpIds: Set<string>,
   onToggleSelectEmp: (empId: string, additive: boolean) => void,
@@ -224,6 +226,7 @@ const renderTreeRecursive = (
             onDeleteEmployee={onDeleteEmployee}
             onCreateVirtualEmployee={onCreateVirtualEmployee}
             onChangeDepartmentLevel={onChangeDepartmentLevel}
+            onSetTargetLevel={onSetTargetLevel}
             allEmployees={allEmployees}
             selectedEmpIds={selectedEmpIds}
             onToggleSelectEmp={onToggleSelectEmp}
@@ -321,6 +324,7 @@ export function OrgChart({
   onChangeDepartmentLevel,
   onDeleteEmployee,
   onCreateVirtualEmployee,
+  onSetTargetLevel,
   allEmployees,
   zoom,
   canvasRef,
@@ -749,6 +753,7 @@ export function OrgChart({
               onDeleteEmployee,
               onCreateVirtualEmployee,
               onChangeDepartmentLevel,
+              onSetTargetLevel,
               allEmployees,
               selectedSet,
               handleToggleSelectEmp
