@@ -1,4 +1,4 @@
-import { Upload, Download, FileSpreadsheet, Image, Plus, Building2, Activity, FileJson, FileText } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, Image, Plus, Building2, Activity, FileJson, FileText, RefreshCw } from 'lucide-react';
 import { Department } from '../types';
 import { useState } from 'react';
 import { useLevelConfigs, fullCode, levelFullLabel } from '../utils/levels';
@@ -14,6 +14,7 @@ interface SidebarProps {
   onOpenHealth: () => void;
   onOpenReport: () => void;
   onExportProject: () => void;
+  onRefreshCanvas: () => void;
   departments: Department[];
   hasData: boolean;
   /** 是否已成功上传员工信息 / 组织架构（用于显示 已上传/未上传 状态条） */
@@ -32,6 +33,7 @@ export function Sidebar({
   onOpenHealth,
   onOpenReport,
   onExportProject,
+  onRefreshCanvas,
   departments,
   hasData,
   hasEmployees,
@@ -114,6 +116,15 @@ export function Sidebar({
               />
             </label>
           </div>
+
+          <button
+            onClick={onRefreshCanvas}
+            disabled={!hasData}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            刷新画布（重新生成）
+          </button>
         </div>
 
         {/* 导出功能 */}

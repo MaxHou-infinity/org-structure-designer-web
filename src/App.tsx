@@ -109,6 +109,11 @@ export default function App() {
   const [orgTemplates, setOrgTemplates] = useState<OrgTemplate[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  // v2.0.5 修复：用 ref 读取最新 allEmployeesFlat / orgTemplates，避免导入 handler 闭包捕获旧值（模板载入后导入不快/不刷新的根因）
+  const allEmployeesRef = useRef(allEmployeesFlat);
+  useEffect(() => { allEmployeesRef.current = allEmployeesFlat; }, [allEmployeesFlat]);
+  const orgTemplatesRef = useRef(orgTemplates);
+  useEffect(() => { orgTemplatesRef.current = orgTemplates; }, [orgTemplates]);
 
   // 首次进入引导：localStorage 标记，默认未看过则展示（v2.0.3 P2-6）
   useEffect(() => {
@@ -165,7 +170,7 @@ export default function App() {
     try {
       const parsedEmployees = await parseEmployeeExcel(file);
       // 用已保存的组织模板（若有）重建，保留模板的部门层级与负责人结构
-      const tree = buildDepartmentTree(parsedEmployees, orgTemplates);
+      const tree = buildDepartmentTree(parsedEmployees, orgTemplatesRef.current);
       setBoth(() => ({ departments: tree, allEmployeesFlat: parsedEmployees }));
       if (parsedEmployees.length > 0) {
         showToast(`已导入 ${parsedEmployees.length} 名员工`);
@@ -176,21 +181,21 @@ export default function App() {
       console.error('解析员工文件失败:', error);
       showToast('解析员工文件失败，请检查格式');
     }
-  }, [setBoth, showToast, orgTemplates]);
+  }, [setBoth, showToast]);
 
   const handleOrgTemplateUpload = useCallback(async (file: File) => {
     try {
       const templates = await parseOrgTemplateExcel(file);
       // 保存模板，供后续员工上传时重建结构
       setOrgTemplates(templates);
-      const tree = buildDepartmentTree(allEmployeesFlat, templates);
+      const tree = buildDepartmentTree(allEmployeesRef.current, templates);
       setDepartments(() => tree);
       showToast(`已导入组织架构（${templates.length} 个部门）`);
     } catch (error) {
       console.error('解析组织架构文件失败:', error);
       showToast('解析组织架构文件失败，请检查格式');
     }
-  }, [allEmployeesFlat, setDepartments, setOrgTemplates, showToast]);
+  }, [setDepartments, setOrgTemplates, showToast]);
 
   /** —— 部门/员工操作（历史感知） —— */
   const handleToggleExpand = useCallback((id: string) => {
@@ -318,6 +323,13 @@ export default function App() {
     },
     [setBoth, showToast],
   );
+
+  /** 手动刷新画布：按当前 员工 + 组织模板 重新生成部门树（修复导入后画布不刷新） */
+  const handleRefreshCanvas = useCallback(() => {
+    const tree = buildDepartmentTree(allEmployeesRef.current, orgTemplatesRef.current);
+    setDepartments(() => tree);
+    showToast('画布已刷新');
+  }, [setDepartments, showToast]);
 
   /** 搜索结果跳转：展开命中祖先链 + 滚动定位到实体 */
   const handleSearchJump = useCallback((match: SearchMatch) => {
@@ -679,6 +691,7 @@ export default function App() {
           hasData={departments.length > 0}
           hasEmployees={allEmployeesFlat.length > 0}
           hasOrgTemplate={orgTemplates.length > 0}
+          onRefreshCanvas={handleRefreshCanvas}
         />
 
         <main
