@@ -6,6 +6,7 @@ import { Department, Employee } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
 import { useSearchHighlight } from './SearchContext';
 import { employeeLevelGap } from '../utils/analytics';
+import { useDisplaySettings } from '../utils/displaySettings';
 
 interface DepartmentCardProps {
   department: Department;
@@ -13,7 +14,7 @@ interface DepartmentCardProps {
   onUpdateDepartment: (id: string, name: string) => void;
   onUpdateLeader: (deptId: string, employee: Employee | null) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
-  onCreateVirtualEmployee: (deptId: string) => void;
+  onCreateVirtualFromEmployee: (deptId: string, empId: string) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   allEmployees: Employee[];
   /** 当前选中的员工 id（批量操作用） */
@@ -21,6 +22,8 @@ interface DepartmentCardProps {
   /** 点击员工切换选中（additive=Shift 加成选） */
   onToggleSelectEmp?: (empId: string, additive: boolean) => void;
   onSetTargetLevel: (empId: string, target: string) => void;
+  onMoveMultiple: (empIds: string[], toDeptId: string) => void;
+  allDepartments: Department[];
 }
 
 function DraggableEmployee({ 
@@ -41,6 +44,7 @@ function DraggableEmployee({
   const levelColor = getLevelColor(levelConfigs, employee.level);
   const highlight = useSearchHighlight();
   const isSearchHit = highlight.empIds.has(employee.id);
+  const { showLevel, showTitle } = useDisplaySettings();
   
   return (
     <div
@@ -53,39 +57,62 @@ function DraggableEmployee({
         e.stopPropagation();
         onSelect?.(employee.id, e.shiftKey);
       }}
-      className={`employee-tag flex items-center gap-1 px-2 py-1 rounded-lg text-xs cursor-move hover:shadow-sm transition-shadow ${
+      className={`employee-tag flex flex-col gap-0.5 px-2 py-1 rounded-lg text-xs cursor-move hover:shadow-sm transition-shadow ${
         isDragging ? 'opacity-50' : ''
       } ${selected ? 'ring-2 ring-indigo-400 bg-indigo-50/80' : ''} ${
         isSearchHit ? 'ring-2 ring-amber-400 bg-amber-50/70' : ''
       }`}
       style={{ backgroundColor: levelColor + '40' }}
     >
-      <User className="w-3 h-3" style={{ color: levelColor }} />
-      <span className="truncate flex-1">{employee.name}</span>
-      <span className="text-[10px]" style={{ color: levelColor }}>{employee.level}</span>
-      {(() => {
-        const gap = employeeLevelGap(employee);
-        if (!gap) return null;
-        const cls =
-          gap.status === 'healthy'
-            ? 'bg-emerald-100 text-emerald-600'
-            : gap.status === 'warn'
-              ? 'bg-amber-100 text-amber-600'
-              : 'bg-red-100 text-red-600';
-        return (
-          <span
-            className={`text-[10px] px-1 rounded font-medium ${cls}`}
-            title={`目标 ${employee.targetLevel} · ${gap.label}`}
-          >
-            {gap.gap > 0 ? `+${gap.gap}` : gap.gap}
-          </span>
-        );
-      })()}
-      {employee.isVirtual && (
-        <span className="text-[10px] text-blue-500 font-medium">(兼)</span>
+      <div className="flex items-center gap-1">
+        <User className="w-3 h-3" style={{ color: levelColor }} />
+        <span className="truncate">{employee.name}</span>
+        {(() => {
+          const gap = employeeLevelGap(employee);
+          if (!gap) return null;
+          const cls =
+            gap.status === 'healthy'
+              ? 'bg-emerald-100 text-emerald-600'
+              : gap.status === 'warn'
+                ? 'bg-amber-100 text-amber-600'
+                : 'bg-red-100 text-red-600';
+          return (
+            <span
+              className={`text-[10px] px-1 rounded font-medium ${cls}`}
+              title={`目标 ${employee.targetLevel} · ${gap.label}`}
+            >
+              {gap.gap > 0 ? `+${gap.gap}` : gap.gap}
+            </span>
+          );
+        })()}
+        {employee.isVirtual && (
+          <span className="text-[10px] text-blue-500 font-medium">(兼)</span>
+        )}
+      </div>
+      {(showTitle || showLevel) && (employee.title || employee.level) && (
+        <div className="flex items-center gap-1 pl-1">
+          {showTitle && employee.title ? (
+            <span className="text-[10px] text-slate-500 truncate">{employee.title}</span>
+          ) : null}
+          {showLevel && employee.level ? (
+            <span className="text-[10px] shrink-0 px-1 rounded bg-white/70 border border-slate-200 text-slate-600">{employee.level}</span>
+          ) : null}
+        </div>
       )}
     </div>
   );
+}
+
+function flattenDeptOptions(depts: Department[]): { id: string; name: string; level: number }[] {
+  const out: { id: string; name: string; level: number }[] = [];
+  const walk = (list: Department[]) => {
+    for (const d of list) {
+      out.push({ id: d.id, name: d.name, level: d.level });
+      walk(d.children);
+    }
+  };
+  walk(depts);
+  return out;
 }
 
 function EmployeeList({ 
@@ -94,7 +121,11 @@ function EmployeeList({
   canDelete,
   selectedEmpIds,
   onSelect,
-  onSetTargetLevel
+  onSetTargetLevel,
+  onCreateVirtual,
+  onMoveMultiple,
+  departments,
+  currentDeptId
 }: { 
   employees: Employee[];
   onDelete: (empId: string) => void;
@@ -102,19 +133,27 @@ function EmployeeList({
   selectedEmpIds?: Set<string>;
   onSelect?: (empId: string, additive: boolean) => void;
   onSetTargetLevel?: (empId: string, target: string) => void;
+  onCreateVirtual?: (empId: string) => void;
+  onMoveMultiple?: (empIds: string[], toDeptId: string) => void;
+  departments: Department[];
+  currentDeptId?: string;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; empId: string } | null>(null);
+  const [showMove, setShowMove] = useState(false);
+  const deptOptions = flattenDeptOptions(departments).filter((d) => d.id !== currentDeptId);
   
   useEffect(() => {
-    const handleClick = () => setContextMenu(null);
+    const handleClick = () => { setContextMenu(null); setShowMove(false); };
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);
   }, []);
   
   const handleContextMenu = (e: React.MouseEvent, empId: string) => {
     e.preventDefault();
+    e.stopPropagation();
     if (canDelete) {
       setContextMenu({ x: e.clientX, y: e.clientY, empId });
+      setShowMove(false);
     }
   };
   
@@ -129,12 +168,50 @@ function EmployeeList({
           {contextMenu?.empId === emp.id && (
             createPortal(
               <div
-                className="fixed bg-white border border-gray-200 rounded shadow-lg py-1 z-50"
+                className="fixed bg-white border border-gray-200 rounded-lg shadow-xl py-1 z-50 min-w-[200px] max-w-[280px]"
                 style={{ left: contextMenu.x, top: contextMenu.y }}
                 onClick={(e) => e.stopPropagation()}
               >
+                {selectedEmpIds?.has(emp.id) && (
+                  <button
+                    className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap"
+                    onClick={() => {
+                      onCreateVirtual?.(emp.id);
+                      setContextMenu(null);
+                    }}
+                  >
+                    创建虚拟员工（兼岗）
+                  </button>
+                )}
+                {selectedEmpIds?.has(emp.id) && (
+                  <button
+                    className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap flex items-center justify-between"
+                    onClick={() => setShowMove((v) => !v)}
+                  >
+                    移动其他部门
+                    <span className="text-gray-400">{showMove ? '▲' : '▼'}</span>
+                  </button>
+                )}
+                {showMove && contextMenu?.empId === emp.id && deptOptions.length > 0 && (
+                  <div className="max-h-40 overflow-y-auto border-t border-gray-100 py-1">
+                    {deptOptions.map((d) => (
+                      <button
+                        key={d.id}
+                        className="w-full px-4 py-1 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap"
+                        onClick={() => {
+                          const moveIds = selectedEmpIds && selectedEmpIds.has(emp.id) ? Array.from(selectedEmpIds) : [emp.id];
+                          onMoveMultiple?.(moveIds, d.id);
+                          setContextMenu(null);
+                          setShowMove(false);
+                        }}
+                      >
+                        {'　'.repeat(Math.min(d.level - 1, 3))}{d.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button
-                  className="w-full px-4 py-1 text-left text-sm hover:bg-gray-100 text-slate-700"
+                  className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap"
                   onClick={() => {
                     const t = window.prompt('输入目标职级（如 L2.1，留空清除）', emp.targetLevel ?? '');
                     if (t === null) return;
@@ -145,7 +222,7 @@ function EmployeeList({
                   设置目标职级
                 </button>
                 <button
-                  className="w-full px-4 py-1 text-left text-sm hover:bg-gray-100 text-red-500"
+                  className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-red-500 truncate whitespace-nowrap"
                   onClick={() => {
                     onDelete(emp.id);
                     setContextMenu(null);
@@ -169,9 +246,11 @@ export function DepartmentCard({
   onUpdateDepartment,
   onUpdateLeader,
   onDeleteEmployee,
-  onCreateVirtualEmployee,
+  onCreateVirtualFromEmployee,
   onChangeDepartmentLevel,
   onSetTargetLevel,
+  onMoveMultiple,
+  allDepartments,
   allEmployees,
   selectedEmpIds,
   onToggleSelectEmp,
@@ -188,6 +267,8 @@ export function DepartmentCard({
   const levelConfigs = useLevelConfigs();
   const highlight = useSearchHighlight();
   const isSearchHit = highlight.deptIds.has(department.id);
+  const { showLevel, showTitle } = useDisplaySettings();
+  const leader = allEmployees.find((e) => e.employeeId === department.leaderId && !e.isVirtual);
   
   // 部门拖拽
   const { attributes: deptAttributes, listeners: deptListeners, setNodeRef: setDeptRef, isDragging: isDeptDragging } = useDraggable({
@@ -275,10 +356,12 @@ export function DepartmentCard({
         zIndex: isDeptDragging ? 1000 : (showLeaderSearch ? 30 : 1),
         position: 'relative'
       }}
-      onContextMenu={handleContextMenu}
     >
       {/* 部门头部 */}
-      <div className={`flex items-center justify-between px-4 py-3 ${levelHeaderBg[department.level] || 'bg-gray-50'} rounded-t-2xl`}>
+      <div
+        onContextMenu={handleContextMenu}
+        className={`flex items-center justify-between px-4 py-3 ${levelHeaderBg[department.level] || 'bg-gray-50'} rounded-t-2xl`}
+      >
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {department.children.length > 0 ? (
             <button
@@ -324,14 +407,18 @@ export function DepartmentCard({
       
       {/* 负责人 */}
       <div className="px-3 py-2 border-b border-gray-100">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">负责人:</span>
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <span className="text-xs text-gray-500 shrink-0">负责人:</span>
           <button
             onClick={handleLeaderClick}
-            className="text-sm text-blue-600 hover:underline flex items-center gap-1"
+            title={`${department.leaderName || ''}${leader && (showTitle || showLevel) ? ' · ' + [(showTitle && leader.title) ? leader.title : null, (showLevel && leader.level) ? leader.level : null].filter(Boolean).join(' · ') : ''}`}
+            className="text-sm text-blue-600 hover:underline flex items-center gap-1 min-w-0 overflow-hidden"
           >
-            <User className="w-3 h-3" />
-            {department.leaderName || '点击选择'}
+            <User className="w-3 h-3 shrink-0" />
+            <span className="truncate">
+              {department.leaderName || '点击选择'}
+              {leader && (showTitle || showLevel) ? ` · ${[(showTitle && leader.title) ? leader.title : null, (showLevel && leader.level) ? leader.level : null].filter(Boolean).join(' · ')}` : ''}
+            </span>
           </button>
         </div>
         
@@ -392,6 +479,10 @@ export function DepartmentCard({
               selectedEmpIds={selectedEmpIds}
               onSelect={onToggleSelectEmp}
               onSetTargetLevel={onSetTargetLevel}
+              onCreateVirtual={(empId) => onCreateVirtualFromEmployee(department.id, empId)}
+              onMoveMultiple={onMoveMultiple}
+              departments={allDepartments}
+              currentDeptId={department.id}
             />
           ) : (
             <div className="text-xs text-gray-400 text-center py-2">
@@ -462,18 +553,6 @@ export function DepartmentCard({
               </div>
             )}
 
-            <div className="border-t border-gray-100" />
-            <button
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCreateVirtualEmployee(department.id);
-                setShowContextMenu(false);
-              }}
-            >
-              <User className="w-4 h-4 text-green-500" />
-              创建虚拟员工
-            </button>
           </div>,
           document.body,
         )}

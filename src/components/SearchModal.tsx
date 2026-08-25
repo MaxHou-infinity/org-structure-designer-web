@@ -14,6 +14,8 @@ interface SearchModalProps {
   onClearHighlight: () => void;
   /** 点击命中项（展开父级 + 滚动定位） */
   onJump: (match: SearchMatch) => void;
+  /** Enter 定位后关闭弹窗但保留高亮（用于定位选中态） */
+  onCloseKeepHighlight: () => void;
 }
 
 export function SearchModal({
@@ -23,6 +25,7 @@ export function SearchModal({
   onHighlight,
   onClearHighlight,
   onJump,
+  onCloseKeepHighlight,
 }: SearchModalProps) {
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -90,6 +93,18 @@ export function SearchModal({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="按姓名 / 工号 / 部门名搜索…"
             className="flex-1 text-sm outline-none bg-transparent placeholder:text-slate-400 text-slate-800"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (result.count > 0) {
+                  const q = query.trim();
+                  const exact = result.matches.find((m) => m.name === q || m.id === q || m.sub?.includes(q));
+                  const best = exact ?? result.matches[0];
+                  onJump(best);
+                  onCloseKeepHighlight();
+                }
+              }
+            }}
           />
           {query && (
             <button

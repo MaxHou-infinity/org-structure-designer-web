@@ -1,7 +1,8 @@
-import { Upload, Download, FileSpreadsheet, Image, Plus, Building2, Activity, FileJson, FileText, RefreshCw } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, Image, Plus, Building2, Activity, FileJson, FileText, RefreshCw, Eye } from 'lucide-react';
 import { Department } from '../types';
 import { useState } from 'react';
 import { useLevelConfigs, fullCode, levelFullLabel } from '../utils/levels';
+import { useDisplaySettings, setDisplaySetting } from '../utils/displaySettings';
 
 interface SidebarProps {
   onEmployeeFileUpload: (file: File) => void;
@@ -44,6 +45,7 @@ export function Sidebar({
   const [newDeptLevel, setNewDeptLevel] = useState(1);
   const [newDeptParent, setNewDeptParent] = useState<string | null>('root');
   const levelConfigs = useLevelConfigs();
+  const { showLevel, showTitle } = useDisplaySettings();
 
   const handleCreateDept = () => {
     if (!newDeptName.trim()) return;
@@ -68,11 +70,6 @@ export function Sidebar({
   const allDepts = flattenDepts(departments);
   return (
     <div className="w-64 glass border-r border-white/20 flex flex-col h-full">
-      <div className="p-4 border-b border-white/30 bg-gradient-to-br from-indigo-500 via-indigo-600 to-purple-600 text-white">
-        <h1 className="text-base font-bold tracking-tight">组织罗盘</h1>
-        <p className="text-xs text-white/70 mt-0.5">OrgCompass</p>
-      </div>
-
       <div className="flex-1 overflow-y-auto p-3 space-y-5">
         {/* 文件上传：两行状态条（已上传 / 未上传），点击即触发上传 */}
         <div className="space-y-2.5">
@@ -125,6 +122,32 @@ export function Sidebar({
             <RefreshCw className="w-3.5 h-3.5" />
             刷新画布（重新生成）
           </button>
+        </div>
+
+        {/* 画布显示设置 */}
+        <div className="space-y-2.5">
+          <h2 className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+            <Eye className="w-3.5 h-3.5 text-indigo-500" />
+            画布显示
+          </h2>
+          <label className="flex items-center justify-between px-2.5 py-1.5 bg-white/70 border border-slate-200 rounded-lg cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/50 transition-all">
+            <span className="text-xs text-slate-600">显示职级</span>
+            <input
+              type="checkbox"
+              checked={showLevel}
+              onChange={(e) => setDisplaySetting('showLevel', e.target.checked)}
+              className="accent-indigo-500 w-4 h-4"
+            />
+          </label>
+          <label className="flex items-center justify-between px-2.5 py-1.5 bg-white/70 border border-slate-200 rounded-lg cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/50 transition-all">
+            <span className="text-xs text-slate-600">显示岗位 / 说明</span>
+            <input
+              type="checkbox"
+              checked={showTitle}
+              onChange={(e) => setDisplaySetting('showTitle', e.target.checked)}
+              className="accent-indigo-500 w-4 h-4"
+            />
+          </label>
         </div>
 
         {/* 导出功能 */}

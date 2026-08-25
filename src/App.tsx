@@ -137,10 +137,25 @@ export default function App() {
     setOnboardingOpen(false);
   }, []);
 
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2200);
   }, []);
+
+  // v2.0.7 首次进入引导：画布默认显示岗位/职级，提示可在左侧「画布显示」开关
+  useEffect(() => {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      if (!localStorage.getItem('org-designer.display-hint')) {
+        localStorage.setItem('org-designer.display-hint', '1');
+        const t = window.setTimeout(() => showToast('画布已默认显示 岗位/职级；可在左侧「画布显示」开关'), 700);
+        return () => window.clearTimeout(t);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [showToast]);
 
   // 撤销/重做键盘：Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z（或 Ctrl+Y）重做
   useEffect(() => {
@@ -348,6 +363,11 @@ export default function App() {
     setSearchHighlight(EMPTY_HIGHLIGHT);
   }, []);
 
+  // Enter 定位后关闭弹窗但保留命中高亮（用于显示“定位选中态”）
+  const handleSearchCloseKeepHighlight = useCallback(() => {
+    setSearchOpen(false);
+  }, []);
+
   const handleSearchClearHighlight = useCallback(() => {
     setSearchHighlight(EMPTY_HIGHLIGHT);
   }, []);
@@ -365,7 +385,8 @@ export default function App() {
   );
 
   const handleDeleteEmployee = useCallback((deptId: string, empId: string) => {
-    setDepartments((prev) => {
+    setBoth((prev) => {
+      const wasVirtual = prev.allEmployeesFlat.find((e) => e.id === empId)?.isVirtual;
       const remove = (depts: Department[]): Department[] => {
         return depts.map((dept) => {
           if (dept.id === deptId) return { ...dept, employees: dept.employees.filter((e) => e.id !== empId) };
@@ -373,9 +394,12 @@ export default function App() {
           return dept;
         });
       };
-      return remove(prev);
+      return {
+        departments: remove(prev.departments),
+        allEmployeesFlat: wasVirtual ? prev.allEmployeesFlat.filter((e) => e.id !== empId) : prev.allEmployeesFlat,
+      };
     });
-  }, [setDepartments]);
+  }, [setBoth]);
 
   // 移动部门（调整层级结构）- 支持拖到根级别
   const handleMoveDepartment = useCallback((deptId: string, targetDeptId: string | null) => {
@@ -431,25 +455,22 @@ export default function App() {
     });
   }, [setDepartments]);
 
-  const handleCreateVirtualEmployee = useCallback((deptId: string) => {
-    const newEmployee: Employee = {
-      id: `virtual-${Date.now()}`,
-      name: '新员工',
-      employeeId: `V${Date.now().toString().slice(-4)}`,
-      level: 'L1.1',
-      isVirtual: true,
-    };
+  const handleCreateVirtualFromEmployee = useCallback((deptId: string, empId: string) => {
+    const source = allEmployeesFlat.find((e) => e.id === empId && !e.isVirtual);
+    if (!source) return;
+    const virtual: Employee = { ...source, id: `virtual-${Date.now()}`, isVirtual: true };
     setBoth((prev) => {
       const add = (depts: Department[]): Department[] => {
         return depts.map((dept) => {
-          if (dept.id === deptId) return { ...dept, employees: [...dept.employees, newEmployee] };
+          if (dept.id === deptId) return { ...dept, employees: [...dept.employees, virtual] };
           if (dept.children.length > 0) return { ...dept, children: add(dept.children) };
           return dept;
         });
       };
-      return { departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, newEmployee] };
+      return { departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
     });
-  }, [setBoth]);
+    showToast(`已创建 ${source.name} 的兼岗`);
+  }, [allEmployeesFlat, setBoth, showToast]);
 
   const handleExportPng = useCallback(async () => {
     if (!canvasRef.current) return;
@@ -709,7 +730,7 @@ export default function App() {
             onMoveDepartment={handleMoveDepartment}
             onChangeDepartmentLevel={handleChangeDepartmentLevel}
             onDeleteEmployee={handleDeleteEmployee}
-            onCreateVirtualEmployee={handleCreateVirtualEmployee}
+            onCreateVirtualFromEmployee={handleCreateVirtualFromEmployee}
             allEmployees={allEmployeesFlat}
             zoom={zoom}
             canvasRef={canvasRef}
@@ -787,6 +808,7 @@ export default function App() {
         onHighlight={setSearchHighlight}
         onClearHighlight={handleSearchClearHighlight}
         onJump={handleSearchJump}
+        onCloseKeepHighlight={handleSearchCloseKeepHighlight}
       />
 
       <UnassignedEmployeesDrawer

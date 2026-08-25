@@ -19,12 +19,21 @@ export interface IndustryTemplate {
   orgTemplates: OrgTemplate[];
 }
 
+function titleForLevel(level: string): string {
+  const n = Number.parseFloat(level.replace(/^[A-Za-z]+/, '')) || 0;
+  if (n >= 5) return '总监';
+  if (n >= 4) return '经理';
+  if (n >= 3) return '主管';
+  return '专员';
+}
+
 function emp(id: string, name: string, employeeId: string, level: string, depts: string[]): Employee {
   return {
     id,
     name,
     employeeId,
     level,
+    title: titleForLevel(level),
     dept1: depts[0] || '',
     dept2: depts[1] || '',
     dept3: depts[2] || '',

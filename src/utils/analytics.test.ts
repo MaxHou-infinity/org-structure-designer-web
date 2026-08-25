@@ -753,4 +753,12 @@ describe('v2.0.5 未入架构员工 & 员工职级差距', () => {
     expect(g).not.toBeNull();
     expect(g!.status).toBe('healthy');
   });
+
+  it('computeUnassignedEmployees 排除虚拟员工（兼岗）', () => {
+    const real = emp('r1', 'L1.1');
+    const virtual = emp('v1', 'L1.1', { isVirtual: true });
+    const root = dept('d1', '技术部', 1, { employees: [real, virtual], children: [] });
+    // 未挂载真实员工才算未入架构；虚拟兼岗不算
+    expect(computeUnassignedEmployees([real, virtual, emp('r2', 'L2.1')], [root]).map((e) => e.id)).toEqual(['r2']);
+  });
 });

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
-import { Plus, Minus } from 'lucide-react';
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
@@ -17,7 +16,7 @@ interface OrgChartProps {
   onMoveDepartment: (deptId: string, targetDeptId: string | null) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
-  onCreateVirtualEmployee: (deptId: string) => void;
+  onCreateVirtualFromEmployee: (deptId: string, empId: string) => void;
   onSetTargetLevel: (empId: string, target: string) => void;
   allEmployees: Employee[];
   zoom: number;
@@ -44,18 +43,6 @@ interface TreeNode {
 const EMPTY_HIGHLIGHT: SearchHighlight = { deptIds: new Set(), empIds: new Set() };
 
 /** 展开所有部门（供批量移动"目标部门"选择器用） */
-function flattenDepts(depts: Department[]): { id: string; name: string; level: number }[] {
-  const out: { id: string; name: string; level: number }[] = [];
-  const walk = (list: Department[]) => {
-    for (const d of list) {
-      out.push({ id: d.id, name: d.name, level: d.level });
-      walk(d.children);
-    }
-  };
-  walk(depts);
-  return out;
-}
-
 /**
  * 计算一个部门的"叶子数"（用于分配子树宽度带）：
  * - 无子部门 或 未展开（折叠）→ 1（它自身仍渲染为一张卡片）
@@ -199,9 +186,11 @@ const renderTreeRecursive = (
   onUpdateDepartment: (id: string, name: string) => void,
   onUpdateLeader: (deptId: string, employee: Employee | null) => void,
   onDeleteEmployee: (deptId: string, empId: string) => void,
-  onCreateVirtualEmployee: (deptId: string) => void,
+  onCreateVirtualFromEmployee: (deptId: string, empId: string) => void,
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void,
   onSetTargetLevel: (empId: string, target: string) => void,
+  onMoveMultiple: (empIds: string[], toDeptId: string) => void,
+  allDepartments: Department[],
   allEmployees: Employee[],
   selectedEmpIds: Set<string>,
   onToggleSelectEmp: (empId: string, additive: boolean) => void,
@@ -224,9 +213,11 @@ const renderTreeRecursive = (
             onUpdateDepartment={onUpdateDepartment}
             onUpdateLeader={onUpdateLeader}
             onDeleteEmployee={onDeleteEmployee}
-            onCreateVirtualEmployee={onCreateVirtualEmployee}
+            onCreateVirtualFromEmployee={onCreateVirtualFromEmployee}
             onChangeDepartmentLevel={onChangeDepartmentLevel}
             onSetTargetLevel={onSetTargetLevel}
+            onMoveMultiple={onMoveMultiple}
+            allDepartments={allDepartments}
             allEmployees={allEmployees}
             selectedEmpIds={selectedEmpIds}
             onToggleSelectEmp={onToggleSelectEmp}
@@ -323,7 +314,7 @@ export function OrgChart({
   onMoveDepartment,
   onChangeDepartmentLevel,
   onDeleteEmployee,
-  onCreateVirtualEmployee,
+  onCreateVirtualFromEmployee,
   onSetTargetLevel,
   allEmployees,
   zoom,
@@ -670,7 +661,6 @@ export function OrgChart({
   
   // 布局按 100% 基准计算，缩放由外层 transform: scale 完成
   const scale = zoom / 100;
-  const clampZoom = useCallback((z: number) => Math.min(Math.max(Math.round(z), 50), 200), []);
   const treeNodes = calculateTreeLayout(departments, 0, 0, 100);
   // 方案 A：布局宽度/高度都由坐标树计算（与绝对定位坐标一致，而非累加根 width）
   const layoutHeight = computeLayoutHeight(treeNodes);
@@ -751,9 +741,11 @@ export function OrgChart({
               onUpdateDepartment,
               onUpdateLeader,
               onDeleteEmployee,
-              onCreateVirtualEmployee,
+              onCreateVirtualFromEmployee,
               onChangeDepartmentLevel,
               onSetTargetLevel,
+              onMoveMultiple,
+              departments,
               allEmployees,
               selectedSet,
               handleToggleSelectEmp
@@ -782,30 +774,6 @@ export function OrgChart({
           </div>
         )}
 
-        {/* 画布右下角浮动缩放控件（放大 / 百分比 / 缩小） */}
-        <div className="absolute bottom-3 right-3 z-[65] flex items-center gap-1 px-1.5 py-1 rounded-full bg-white/90 backdrop-blur border border-slate-200 shadow-md">
-          <button
-            onClick={() => onZoomChange(clampZoom(zoom - 10))}
-            disabled={zoom <= 50}
-            aria-label="缩小"
-            title="缩小"
-            className="w-7 h-7 grid place-items-center rounded-full text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            <Minus className="w-4 h-4" />
-          </button>
-          <span className="min-w-[44px] text-center text-xs font-semibold text-slate-700 tabular-nums">
-            {Math.round(zoom)}%
-          </span>
-          <button
-            onClick={() => onZoomChange(clampZoom(zoom + 10))}
-            disabled={zoom >= 200}
-            aria-label="放大"
-            title="放大"
-            className="w-7 h-7 grid place-items-center rounded-full text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-        </div>
 
         {/* 框选选择框（viewport 坐标，fixed 定位） */}
         {frameRect && frameRect.w > 0 && (
@@ -820,40 +788,6 @@ export function OrgChart({
           />
         )}
 
-        {/* 批量选择浮动工具条（多选开启时显示） */}
-        {selectedEmpIds.length > 0 && (
-          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] flex items-center gap-2.5 px-4 py-2 rounded-full bg-slate-900/85 text-white text-sm font-medium shadow-xl backdrop-blur-sm animate-fadeInUp">
-            <span className="flex items-center gap-1.5">
-              已选 <span className="text-indigo-300 font-bold">{selectedEmpIds.length}</span> 人
-            </span>
-            <select
-              defaultValue="__none__"
-              onChange={(e) => {
-                const id = e.target.value;
-                if (id && id !== '__none__') {
-                  onMoveMultiple(selectedEmpIds, id);
-                  setSelectedEmpIds([]);
-                }
-              }}
-              title="批量移动到目标部门"
-              className="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 text-xs text-white outline-none focus-ring [&>option]:text-slate-700"
-            >
-              <option value="__none__" disabled>移动到…</option>
-              {flattenDepts(departments).map((d) => (
-                <option key={d.id} value={d.id}>
-                  {'　'.repeat(Math.min(d.level - 1, 3))}{d.name}
-                </option>
-              ))}
-            </select>
-            <span className="text-xs text-white/60 hidden sm:inline">或拖拽到目标部门</span>
-            <button
-              onClick={() => setSelectedEmpIds([])}
-              className="ml-1 px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 text-xs transition-colors"
-            >
-              清除选择
-            </button>
-          </div>
-        )}
         </SearchHighlightContext.Provider>
       </div>
       

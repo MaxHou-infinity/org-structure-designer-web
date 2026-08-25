@@ -49,7 +49,6 @@ function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastS
 }
 
 export function TopBar({
-  projectName,
   scenarios,
   currentScenarioId,
   onSwitchScenario,
@@ -106,16 +105,13 @@ export function TopBar({
           <div className="leading-tight">
             <div className="flex items-center gap-2">
               <span className="text-[15px] font-bold text-slate-900 tracking-tight">组织罗盘</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.6</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.7</span>
             </div>
             <div className="text-[10px] text-slate-500 tracking-wide">OrgCompass</div>
           </div>
         </div>
 
         <div className="hidden md:flex items-center gap-2 min-w-0">
-          <span className="text-sm font-semibold text-slate-800 truncate max-w-[160px]" title={projectName}>
-            {projectName}
-          </span>
           <SaveIndicator saveState={saveState} lastSavedAt={lastSavedAt} />
         </div>
 
@@ -251,27 +247,27 @@ export function TopBar({
           健康度
         </button>
 
-        <div className="flex items-center gap-1 px-1.5 py-1 rounded-xl bg-slate-100/80 border border-slate-200/60">
+        <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-lg bg-slate-100/80 border border-slate-200/60">
           <button
             onClick={onZoomOut}
             disabled={zoom <= 50}
-            className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center justify-center w-7 h-7 rounded-md text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             aria-label="缩小"
             title="缩小"
           >
-            <Minus className="w-4 h-4" />
+            <Minus className="w-3.5 h-3.5" />
           </button>
-          <span className="text-sm font-semibold text-slate-700 w-14 text-center tabular-nums">
+          <span className="text-xs font-semibold text-slate-700 w-10 text-center tabular-nums">
             {zoom}%
           </span>
           <button
             onClick={onZoomIn}
             disabled={zoom >= 200}
-            className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center justify-center w-7 h-7 rounded-md text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             aria-label="放大"
             title="放大"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5" />
           </button>
         </div>
 

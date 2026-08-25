@@ -41,7 +41,8 @@ export function parseEmployeeExcel(file: File): Promise<Employee[]> {
       id: `emp-${index}-${Date.now()}`,
       name: cellString(row['姓名']),
       employeeId: cellString(row['工号']),
-      level: cellString(row['职级']),
+      level: cellString(row['职级']) || 'NA',
+      title: cellString(row['岗位'] ?? row['职位']) || 'NA',
       dept1: cellString(row['一级部门']),
       dept2: cellString(row['二级部门']),
       dept3: cellString(row['三级部门']),
@@ -262,9 +263,9 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 export async function buildSampleEmployeeTemplateBytes(): Promise<Uint8Array> {
   const XLSX = await loadXlsx();
   const data = [
-    { '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
-    { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
-    { '姓名': '王五', '工号': 'E003', '职级': 'L4.2', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '', '四级部门': '', '五级部门': '', '六级部门': '' },
+    { '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '岗位': '前端工程师', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
+    { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '岗位': '前端开发', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
+    { '姓名': '王五', '工号': 'E003', '职级': 'L4.2', '岗位': '研发经理', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '', '四级部门': '', '五级部门': '', '六级部门': '' },
   ];
 
   const worksheet = XLSX.utils.json_to_sheet(data);

@@ -818,5 +818,5 @@ export function computeUnassignedEmployees(allEmployees: Employee[], departments
     }
   };
   walk(departments);
-  return allEmployees.filter((e) => !placed.has(e.id));
+  return allEmployees.filter((e) => !e.isVirtual && !placed.has(e.id));
 }

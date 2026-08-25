@@ -14,6 +14,8 @@ export interface Employee {
   cost?: number;
   /** 目标职级（可选；员工层职级差距红黄绿分析用）。 */
   targetLevel?: string;
+  /** 岗位/职位名称（可选；画布显示用，录入为空时落 'NA'）。 */
+  title?: string;
 }
 
 export interface Department {
