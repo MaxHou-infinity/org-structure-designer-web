@@ -1,0 +1,47 @@
+name: PR 检查（lint / test / build / audit）
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: 前端检查（lint + 单测 + 构建 + 运行时依赖审计）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 单元测试
+        run: npm run test
+
+      - name: 构建（tsc + vite build）
+        run: npm run build
+
+      - name: 运行时依赖安全审计（生产依赖高危=0）
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: 上传构建产物（用于排查）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: ignore
