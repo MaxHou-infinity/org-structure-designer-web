@@ -12,6 +12,7 @@ import {
   PROJECT_STORAGE_KEY,
   DEFAULT_SCENARIO_NAME,
 } from './project';
+import { computeL2 } from './analytics';
 import { Scenario, Department, Employee } from '../types';
 
 function emp(id: string): Employee {
@@ -185,7 +186,6 @@ describe('parseProject 版本迁移与字段归一化', () => {
     expect(p.version).toBe(PROJECT_VERSION);
     expect(p.meta.version).toBe(PROJECT_VERSION);
   });
-
   it('显式 version 0（历史项目）→ 保留 0，不强行迁移为 1', () => {
     const raw = JSON.stringify({ id: 'proj', name: 'x', version: 0, scenarios: [{ id: 's1', name: 'A' }] });
     const p = parseProject(raw)!;
@@ -244,5 +244,83 @@ describe('parseProject 版本迁移与字段归一化', () => {
     expect(d1.headcount).toBe(0); // number 保留，含 0
     expect(d2.headcount).toBeUndefined();
     expect(d3.headcount).toBeUndefined();
+  });
+});
+
+// —— —— v2.0.9：.orgproj 兼容守卫（口径修正零数据模型改动） —— ——
+
+describe('v2.0.9 .orgproj 往返一致守卫', () => {
+  /** 构造一个字段齐全（负责人/编制/职级/画布/时间戳）的项目，作为口径修正前后的对照样本 */
+  function richProject(): ProjectFile {
+    return {
+      id: 'proj-1',
+      name: '兼容项目',
+      version: PROJECT_VERSION,
+      currentScenarioId: 's1',
+      scenarios: [{
+        id: 's1',
+        name: '基线',
+        createdAt: '2026-08-01T00:00:00Z',
+        updatedAt: '2026-08-01T00:00:00Z',
+        departments: [{
+          id: 'd1',
+          name: '技术部',
+          level: 1,
+          leaderId: 'L01',
+          leaderName: '领导A',
+          parentId: undefined,
+          expanded: true,
+          headcount: 5,
+          children: [{
+            id: 'd2',
+            name: '研发组',
+            level: 2,
+            leaderId: 'L02',
+            leaderName: '领导B',
+            parentId: 'd1',
+            expanded: true,
+            headcount: 3,
+            children: [],
+            employees: [
+              { id: 'e1', name: '员工一', employeeId: 'E001', level: 'L1.1', title: '工程师', cost: 2.5 },
+              { id: 'l02', name: '领导B', employeeId: 'L02', level: 'L3.2', targetLevel: 'L2.1' },
+            ],
+          }],
+          employees: [
+            { id: 'l01', name: '领导A', employeeId: 'L01', level: 'L3.2', isVirtual: false },
+            { id: 'e2', name: '员工二', employeeId: 'E002', level: 'L1.1' },
+          ],
+        } as Department],
+        allEmployeesFlat: [
+          { id: 'l01', name: '领导A', employeeId: 'L01', level: 'L3.2' },
+          { id: 'l02', name: '领导B', employeeId: 'L02', level: 'L3.2' },
+          { id: 'e1', name: '员工一', employeeId: 'E001', level: 'L1.1' },
+          { id: 'e2', name: '员工二', employeeId: 'E002', level: 'L1.1' },
+        ],
+        levelConfigs: [{ code: 'L', number: '1.1', label: '初级', color: '#FFCC99', cost: 2 }],
+        canvas: { zoom: 120, lastFocusedDeptId: 'd1' },
+      }],
+      meta: { createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', version: PROJECT_VERSION },
+    };
+  }
+
+  it('parse(serialize(p)) 深等于 p（数据模型零改动，.orgproj 向后兼容）', () => {
+    const p = richProject();
+    const roundTripped = parseProject(serializeProject(p));
+    expect(roundTripped).not.toBeNull();
+    expect(roundTripped).toEqual(p);
+  });
+
+  it('往返后 computeL2 口径分析结果一致（breakdown 为运行时派生，不写入持久化结构）', () => {
+    const p = richProject();
+    const before = computeL2(p.scenarios[0].departments);
+    const rt = parseProject(serializeProject(p))!;
+    const after = computeL2(rt.scenarios[0].departments);
+    expect(after).toEqual(before);
+    // 三段 breakdown 均在运行时派生出并挂到 L2 指标上
+    const span = after.find((m) => m.key === 'span')!;
+    expect(span.spanBreakdown).toBeDefined();
+    expect(after.find((m) => m.key === 'depth')!.depthBreakdown).toBeDefined();
+    expect(after.find((m) => m.key === 'managerRatio')!.managerBreakdown).toBeDefined();
   });
 });

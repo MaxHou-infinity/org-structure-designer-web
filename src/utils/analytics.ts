@@ -38,16 +38,77 @@ export interface L1DeptSummary {
   status: HealthStatus;
 }
 
+/** —— v2.0.9 口径修正：明细/分布数据结构（运行时派生，不进持久化模型） —— */
+
+/** 管理幅度单行：某个「有负责人」部门的直管数 */
+export interface SpanRow {
+  deptId: string;
+  deptName: string;
+  /** 直管人数 = 节点直挂非虚拟 IC 数 + 下一层「有负责人」子部门数 */
+  directReports: number;
+}
+
+/** 管理幅度分布（v2.0.9）：中位数主判 + 极值兜底 + 部门级裸奔明细 */
+export interface SpanBreakdown {
+  /** 有负责人部门数（样本量） */
+  count: number;
+  /** 主值：直管数中位数（round1） */
+  median: number | null;
+  /** 均值（保留作参考，不参与判定） */
+  mean: number | null;
+  /** 最窄直管数 */
+  min: number | null;
+  /** 极值：最宽直管数（用于「单点失衡」告警） */
+  max: number | null;
+  /** 每个有负责人部门的直管数，按 directReports 降序 */
+  distribution: SpanRow[];
+}
+
+/** 层级深度分布（v2.0.9）：P90 主判 + max 硬上限 + 最深链定位 */
+export interface DepthBreakdown {
+  /** 最大层数（根 L1=1，= 旧 computeTreeDepth） */
+  max: number;
+  /** 所有部门节点深度的中位数 */
+  p50: number;
+  /** 所有部门节点深度的 90 分位（nearest-rank，整数层） */
+  p90: number;
+  /** 最深链路的叶子部门 id */
+  deepestDeptId: string;
+  /** 根 → … → 最深叶子的部门名链 */
+  deepestPath: string[];
+  /** 参与统计的部门总数（空树为 0） */
+  deptCount: number;
+}
+
+/** 管理者明细（v2.0.9）：内部/外部/兼岗 + 双口径分母 */
+export interface ManagerBreakdown {
+  /** 内部负责人数（去重、剔除外部）—— 主口径分子 */
+  internalManagers: number;
+  /** 外部负责人数（不在员工名册内）—— 仅展示，不计分子 */
+  externalManagers: number;
+  /** 兼岗：同一人兼任 ≥2 个部门的人数（仅展示，去重后分子不变） */
+  multiDeptManagers: number;
+  /** 分母：员工总数（含管理者、非虚拟） */
+  totalEmployees: number;
+  /** 非管理员工数 = totalEmployees - internalManagers（辅助口径用） */
+  nonManagerEmployees: number;
+}
+
 /** L2 单项指标 */
 export interface L2Metric {
   key: 'span' | 'depth' | 'managerRatio' | 'vacancy';
   label: string;
-  /** 指标值；不可计算时为 null（如无负责人、无编制、无员工） */
+  /** 指标值；不可计算时为 null（如无负责人、无编制、无员工）。
+   *  v2.0.9 语义：span = 直管数中位数；depth = 深度 P90（主）；managerRatio = 内部负责人 ÷ 含管理者全员。 */
   value: number | null;
   unit: string;
   status: HealthStatus;
   /** 一句话判读 */
   verdict: string;
+  // —— v2.0.9 新增（可选，缺省退化为旧渲染行为）——
+  spanBreakdown?: SpanBreakdown;
+  depthBreakdown?: DepthBreakdown;
+  managerBreakdown?: ManagerBreakdown;
 }
 
 /** L3 单行（编制 vs 实际 vs 缺口，含成本） */
@@ -283,6 +344,43 @@ export function flattenDepartments(depts: Department[]): Department[] {
   return out;
 }
 
+/** —— —— v2.0.9：口径修正基础工具 —— —— */
+
+/**
+ * 某部门负责人的直管人数（v2.0.9 统一口径）：
+ *   = 节点直挂非虚拟 IC 数 + 下一层「有负责人」子部门数
+ * 语义：经理直接管理的人 = 直接汇报给 TA 的一线员工 + 直接汇报给 TA 的下一级管理者。
+ * 对扁平单层组织（无子部门）退化为「节点直挂 IC 数」，与旧口径完全一致，不产生回归。
+ */
+export function directReports(dept: Department): number {
+  const directICs = dept.employees.filter((e) => !e.isVirtual).length;
+  const directManagers = dept.children.filter((c) => c.leaderId || c.leaderName).length;
+  return directICs + directManagers;
+}
+
+/** 中位数：n 奇数取中间，偶数取两中间值平均（round1）。入参须已升序。 */
+function medianOf(sortedValues: number[]): number {
+  const n = sortedValues.length;
+  if (n === 0) return 0;
+  const mid = Math.floor(n / 2);
+  if (n % 2 === 1) return sortedValues[mid];
+  return round1((sortedValues[mid - 1] + sortedValues[mid]) / 2);
+}
+
+/** nearest-rank 百分位：index = ceil(p·n) − 1，返回真实存在的样本值（保证整数分位）。入参须已升序。 */
+function percentileNearestRank(sortedValues: number[], p: number): number {
+  const n = sortedValues.length;
+  if (n === 0) return 0;
+  const idx = Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1));
+  return sortedValues[idx];
+}
+
+/** 取更差一档的状态（danger > warn > healthy） */
+function worseStatus(a: HealthStatus, b: HealthStatus): HealthStatus {
+  const rank: Record<HealthStatus, number> = { healthy: 0, warn: 1, danger: 2 };
+  return rank[a] >= rank[b] ? a : b;
+}
+
 /** 子树编制合计（只累加 headcount > 0 的部门；headcount<=0/未配置视为无有效编制 → 返回 null） */
 function sumHeadcountSubtree(dept: Department): number | null {
   let sum = 0;
@@ -420,82 +518,246 @@ export function computeL1(depts: Department[], thresholds: HealthThresholds = ge
 
 /** —— L2 —— */
 
+/** —— v2.0.9：三个口径 breakdown 纯函数（独立可测，供场景差异比较与报告复用） —— */
+
 /**
- * 计算 L2 四项指标。
- * 口径（队长决策 v2.0.2）：
- * - 管理幅度 = 直属下属数 = 有负责人部门下属总数 ÷ 有负责人部门数（非整棵子树）
- * - 层级深度 = 树最大 depth（根 L1=1）
- * - 管理者比 = 管理人数 ÷ 总人数（headcount 口径）
- * - 空岗率 = 空缺职位数 ÷ 编制总数（编制需用户填，未填则跳过 → null）
- * 所有阈值为「默认阈值」，可在分析面板标注"可后续调"。
- * @param roots 作用域根部门列表（聚焦单个 L1 时传入 [该部门]）
+ * 管理幅度分布（v2.0.9）：
+ * 统计对象 = 所有「有负责人」部门；直管数 = directReports(dept)。
+ * median 为主值（对极端值稳健），mean 保留作参考，max 供「单点失衡」告警。
  */
-export function computeL2(roots: Department[], thresholds: HealthThresholds = getHealthThresholds()): L2Metric[] {
+export function computeSpanBreakdown(roots: Department[]): SpanBreakdown {
+  const rows: SpanRow[] = [];
+  for (const d of flattenDepartments(roots)) {
+    if (d.leaderId || d.leaderName) {
+      rows.push({ deptId: d.id, deptName: d.name, directReports: directReports(d) });
+    }
+  }
+  if (rows.length === 0) {
+    return { count: 0, median: null, mean: null, min: null, max: null, distribution: [] };
+  }
+  const values = rows.map((r) => r.directReports).sort((a, b) => a - b);
+  return {
+    count: rows.length,
+    median: medianOf(values),
+    mean: round1(values.reduce((s, v) => s + v, 0) / values.length),
+    min: values[0],
+    max: values[values.length - 1],
+    distribution: rows
+      .slice()
+      .sort((a, b) => b.directReports - a.directReports || a.deptName.localeCompare(b.deptName, 'zh-CN')),
+  };
+}
+
+/**
+ * 层级深度分布（v2.0.9）：
+ * 从结构重算每个部门的深度（根 L1=1），不信任 Department.level（防手工/导入导致 level 与真实深度不一致）。
+ * 统计对象 = 所有部门节点（不是「叶路径」）：HR 关心「大多数部门在第几层」。
+ */
+export function computeDepthBreakdown(roots: Department[]): DepthBreakdown {
+  const depths: number[] = [];
+  let deepest = { depth: 0, deptId: '', path: [] as string[] };
+  const walk = (d: Department, depth: number, path: string[]) => {
+    depths.push(depth);
+    if (d.children.length === 0 && depth > deepest.depth) {
+      deepest = { depth, deptId: d.id, path: path.concat(d.name) };
+    }
+    const nextPath = path.concat(d.name);
+    for (const c of d.children) walk(c, depth + 1, nextPath);
+  };
+  for (const r of roots) walk(r, 1, []);
+  if (depths.length === 0) {
+    return { max: 0, p50: 0, p90: 0, deepestDeptId: '', deepestPath: [], deptCount: 0 };
+  }
+  const sorted = depths.slice().sort((a, b) => a - b);
+  return {
+    max: deepest.depth,
+    p50: medianOf(sorted),
+    p90: percentileNearestRank(sorted, 0.9),
+    deepestDeptId: deepest.deptId,
+    deepestPath: deepest.path,
+    deptCount: sorted.length,
+  };
+}
+
+/**
+ * 管理者明细（v2.0.9）：
+ * - 统一去重：负责人解析到名册员工（优先 employeeId、其次姓名），修正「同一人 A 部门用 leaderId、
+ *   B 部门用 leaderName」的双计 bug；
+ * - 内部判定：负责人能在员工名册（scope 内非虚拟员工）命中 → 内部；否则判外部（挂名/组织外 VP/上级集团），
+ *   不计主口径分子、仅展示计数；
+ * - 兼岗：同一人兼任 ≥2 部门 → multiDeptManagers 暴露（去重后分子仍算 1，不会虚高）。
+ * - 副职/挂名的精确剔除需 v2.1.0 的「负责人类型」字段，本版本仅「尽力而为」并留痕。
+ */
+export function computeManagerBreakdown(roots: Department[]): ManagerBreakdown {
   const allDepts = flattenDepartments(roots);
-  // 用包裹根构造一个临时对象收集全量员工（不含虚拟兼岗）
-  const allEmployees = collectEmployees(
+  const emps = collectEmployees(
     { id: '', name: '', level: 0, expanded: true, children: roots, employees: [] } as Department,
     false,
   );
 
-  // 管理者 = 有 leaderId/leaderName 的部门负责人去重
-  const managerKeys = new Set<string>();
-  for (const d of allDepts) {
-    if (d.leaderId) managerKeys.add(`id:${d.leaderId}`);
-    else if (d.leaderName) managerKeys.add(`name:${d.leaderName}`);
+  const byEmployeeId = new Map<string, Employee>();
+  const byName = new Map<string, Employee>();
+  for (const e of emps) {
+    if (e.employeeId && !byEmployeeId.has(e.employeeId)) byEmployeeId.set(e.employeeId, e);
+    if (e.name && !byName.has(e.name)) byName.set(e.name, e);
   }
-  const managerCount = managerKeys.size;
-  const totalEmployees = allEmployees.length;
 
-  // 管理幅度 = 直属下属数（leader 下直接管理的人数 = 部门自身 employees.length，非整棵子树）
-  // 聚合口径：有负责人部门的下属总数 ÷ 有负责人的部门数（即"每经理平均直管人数"）。
-  let spanLeaders = 0;
-  let spanReports = 0;
-  for (const d of allDepts) {
-    if (d.leaderId || d.leaderName) {
-      spanLeaders += 1;
-      spanReports += d.employees.filter((e) => !e.isVirtual).length; // 不计虚拟兼岗
+  /** 负责人 → 名册员工记录：优先 employeeId，其次姓名；都无法命中 → null（外部）。 */
+  const resolveLeader = (d: Department): Employee | null => {
+    if (d.leaderId) {
+      const hit = byEmployeeId.get(d.leaderId);
+      if (hit) return hit;
+      // leaderId 未命中名册：借用姓名再试一次（同一人可能在其它部门仅以姓名记录）
+      if (d.leaderName) {
+        const byNameHit = byName.get(d.leaderName);
+        if (byNameHit) return byNameHit;
+      }
+      return null;
     }
+    if (d.leaderName) return byName.get(d.leaderName) ?? null;
+    return null;
+  };
+
+  // 统一 person key：内部 = 名册员工记录（employeeId 优先），外部 = 原 key（id 优先）
+  const kindByPerson = new Map<string, 'internal' | 'external'>();
+  const deptCountByPerson = new Map<string, number>();
+  for (const d of allDepts) {
+    if (!d.leaderId && !d.leaderName) continue;
+    const empHit = resolveLeader(d);
+    const personKey = empHit ? `emp:${empHit.employeeId || empHit.id}` : `ext:${d.leaderId || d.leaderName}`;
+    if (!kindByPerson.has(personKey)) {
+      kindByPerson.set(personKey, empHit ? 'internal' : 'external');
+    }
+    deptCountByPerson.set(personKey, (deptCountByPerson.get(personKey) ?? 0) + 1);
   }
+
+  let internalManagers = 0;
+  let externalManagers = 0;
+  for (const kind of kindByPerson.values()) {
+    if (kind === 'internal') internalManagers += 1;
+    else externalManagers += 1;
+  }
+  const multiDeptManagers = [...deptCountByPerson].filter(
+    ([key, n]) => n >= 2 && kindByPerson.get(key) === 'internal',
+  ).length;
+
+  return {
+    internalManagers,
+    externalManagers,
+    multiDeptManagers,
+    totalEmployees: emps.length,
+    nonManagerEmployees: Math.max(emps.length - internalManagers, 0),
+  };
+}
+
+/**
+ * v2.0.9 管理幅度灯号：中位数主判 + 极值升级（Captain 裁决）。
+ * - 基础：spanStatus(median, thresholds)，阈值区间（spanHealthyMin~spanHealthyMax）不变；
+ * - 极值升级：max > spanWarnMax → 至少「关注」；max ≥ spanWarnMax × 1.5 → 「预警」。
+ *   使「一个 40 人直管部门不再被窄部门抹平」——L2 聚合看中位数，极值单独兜底。
+ */
+export function spanStatusWithBreakdown(b: SpanBreakdown, t: HealthThresholds): HealthStatus {
+  if (b.count === 0 || b.median === null) return 'warn';
+  let status = spanStatus(b.median, t);
+  if (b.max !== null && b.max > t.spanWarnMax) {
+    status = b.max >= t.spanWarnMax * 1.5 ? 'danger' : worseStatus(status, 'warn');
+  }
+  return status;
+}
+
+/**
+ * v2.0.9 层级深度灯号（Captain 裁决）：P90 主判 + 孤立深链升级 + max 硬上限。
+ * - 主判：p90 ≤ depthHealthyMax 健康 / ≤ depthWarnMax 关注 / > 预警（阈值沿用，不变）；
+ * - 孤立深链升级：max > depthWarnMax → 至少「关注」（即使 P90 健康）；
+ * - 硬上限：max > depthWarnMax + 2 → 「预警」（单条过深链路本身是治理信号）。
+ */
+export function depthStatusWithBreakdown(b: DepthBreakdown, t: HealthThresholds): HealthStatus {
+  if (b.deptCount === 0) return 'warn';
+  let status = depthStatus(b.p90, t);
+  if (b.max > t.depthWarnMax) status = worseStatus(status, 'warn');
+  if (b.max > t.depthWarnMax + 2) status = 'danger';
+  return status;
+}
+
+/** v2.0.9 管理者比判读文案（主口径 + 辅助口径 + 外部/兼岗留痕） */
+function managerRatioVerdictText(status: HealthStatus, b: ManagerBreakdown): string {
+  const base =
+    status === 'healthy'
+      ? '管理者占比合理'
+      : status === 'warn'
+        ? '管理者占比偏高，注意成本/官僚倾向'
+        : '管理者占比过高，存在头重脚轻';
+  const parts: string[] = [];
+  if (b.externalManagers > 0) parts.push(`外部负责人 ${b.externalManagers} 人已剔除`);
+  if (b.multiDeptManagers > 0) parts.push(`兼任多部门负责人 ${b.multiDeptManagers} 人已去重`);
+  const per =
+    b.nonManagerEmployees > 0 && b.internalManagers > 0
+      ? Math.round(b.nonManagerEmployees / b.internalManagers)
+      : null;
+  if (per !== null) parts.push(`约 ${per} 名非管理员工配 1 名管理者`);
+  return parts.length > 0 ? `${base}（${parts.join('；')}）` : base;
+}
+
+/**
+ * 计算 L2 四项指标。
+ * 口径（v2.0.9 修正，Captain 裁决定案）：
+ * - 管理幅度 = 有负责人部门「直管人数」的中位数（直管 = 节点直挂 IC + 下一层有负责人子部门数）；
+ *   主判中位数 + 极值升级（max > spanWarnMax → 至少关注；≥ ×1.5 → 预警）。
+ * - 层级深度 = 部门节点深度分布（根 L1=1）的 P90 主判 + 孤立深链升级 + max 硬上限；
+ *   展示 max / P50 / P90 与最深链定位。
+ * - 管理者比 = 内部负责人数（去重、剔除外部）÷ 员工总数（含管理者、非虚拟）× 100。
+ * - 空岗率 = 空缺职位数 ÷ 编制总数（编制需用户填，未填则跳过 → null）。
+ * 所有阈值为「默认阈值」，可在分析面板标注"可后续调"（阈值结构不变）。
+ * @param roots 作用域根部门列表（聚焦单个 L1 时传入 [该部门]）
+ */
+export function computeL2(roots: Department[], thresholds: HealthThresholds = getHealthThresholds()): L2Metric[] {
+  const allDepts = flattenDepartments(roots);
+
+  // —— 管理幅度（v2.0.9：中位数主判 + 极值升级 + 直管口径修正）——
+  const spanBreakdown = computeSpanBreakdown(roots);
   let span: number | null = null;
   let spanStatusVal: HealthStatus = 'warn';
   let spanVerdict = '无法计算管理幅度（未设置部门负责人）';
-  if (spanLeaders > 0) {
-    span = round1(spanReports / spanLeaders);
-    spanStatusVal = spanStatus(span, thresholds);
-    spanVerdict =
-      spanStatusVal === 'healthy'
-        ? '管理幅度适中，层级健康'
-        : spanStatusVal === 'warn'
-          ? '管理幅度偏窄/偏宽，建议优化汇报线'
-          : '管理幅度失衡，存在失控或冗余风险';
+  if (spanBreakdown.count > 0 && spanBreakdown.median !== null) {
+    const median = spanBreakdown.median;
+    const max = spanBreakdown.max ?? median;
+    span = median;
+    spanStatusVal = spanStatusWithBreakdown(spanBreakdown, thresholds);
+    const maxEscalated = spanBreakdown.max !== null && spanBreakdown.max > thresholds.spanWarnMax;
+    if (spanStatusVal === 'healthy') {
+      spanVerdict = `典型直管 ${median} 人（中位数），管理幅度适中；最宽 ${max} 人，无失控单点`;
+    } else if (spanStatusVal === 'warn') {
+      spanVerdict = maxEscalated
+        ? `典型直管 ${median} 人（中位数）；最宽 ${max} 人已超出关注上限，存在单点失衡风险`
+        : `典型直管 ${median} 人，幅度偏窄/偏宽，建议优化汇报线`;
+    } else {
+      spanVerdict = `典型直管 ${median} 人，管理幅度失衡；最宽 ${max} 人存在失控/冗余风险`;
+    }
   }
 
-  // 层级深度（空树 depth=0 不作「层级健康」判定，判中性/关注）
-  const depth = computeTreeDepth(roots);
-  const depthStatusVal = depth === 0 ? 'warn' : depthStatus(depth, thresholds);
+  // —— 层级深度（v2.0.9：P90 主判 + 孤立深链升级 + max 硬上限；value 展示 P90）——
+  const depthBreakdown = computeDepthBreakdown(roots);
+  const depth = depthBreakdown.p90;
+  const depthStatusVal = depthStatusWithBreakdown(depthBreakdown, thresholds);
   const depthVerdict =
-    depth === 0
+    depthBreakdown.deptCount === 0
       ? '暂无部门数据，无法评估层级深度'
       : depthStatusVal === 'healthy'
-        ? '层级精简，决策链短'
+        ? `层级精简（最深 ${depthBreakdown.max} 层）；典型 P50=${depthBreakdown.p50} 层，P90=${depthBreakdown.p90} 层`
         : depthStatusVal === 'warn'
-          ? '层级偏深，可考虑扁平化'
-          : '层级过深，决策效率低，建议压缩';
+          ? `最深 ${depthBreakdown.max} 层，典型 P50=${depthBreakdown.p50}/P90=${depthBreakdown.p90} 层；偏深主要来自个别深链，建议定位最深链路部门`
+          : `层级过深（最深 ${depthBreakdown.max} 层）；典型 P50=${depthBreakdown.p50}/P90=${depthBreakdown.p90} 层，最深链路位于 ${depthBreakdown.deepestPath.join(' → ')}，建议压缩`;
 
-  // 管理者比
+  // —— 管理者比（v2.0.9：剔除外部 + 统一去重 + 暴露兼岗；分母含管理者，辅助口径展示）——
+  const managerBreakdown = computeManagerBreakdown(roots);
+  const totalEmployees = managerBreakdown.totalEmployees;
   let managerRatio: number | null = null;
   let managerRatioStatusVal: HealthStatus = 'warn';
   let managerRatioVerdict = '无法计算管理者比（无员工数据）';
   if (totalEmployees > 0) {
-    managerRatio = round1((managerCount / totalEmployees) * 100);
+    managerRatio = round1((managerBreakdown.internalManagers / totalEmployees) * 100);
     managerRatioStatusVal = managerRatioStatus(managerRatio, thresholds);
-    managerRatioVerdict =
-      managerRatioStatusVal === 'healthy'
-        ? '管理者占比合理'
-        : managerRatioStatusVal === 'warn'
-          ? '管理者占比偏高，注意成本/官僚倾向'
-          : '管理者占比过高，存在头重脚轻';
+    managerRatioVerdict = managerRatioVerdictText(managerRatioStatusVal, managerBreakdown);
   }
 
   // 空岗率（口径对齐 v2.0.8）：分子 = 已配置编制(headcount>0)部门的编制合计；分母 = 同批已配置编制部门子树内的员工数（不含虚拟兼岗）。
@@ -534,9 +796,33 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
   }
 
   return [
-    { key: 'span', label: '管理幅度', value: span, unit: '人', status: spanStatusVal, verdict: spanVerdict },
-    { key: 'depth', label: '层级深度', value: depth, unit: '层', status: depthStatusVal, verdict: depthVerdict },
-    { key: 'managerRatio', label: '管理者比', value: managerRatio, unit: '%', status: managerRatioStatusVal, verdict: managerRatioVerdict },
+    {
+      key: 'span',
+      label: '管理幅度',
+      value: span,
+      unit: '人',
+      status: spanStatusVal,
+      verdict: spanVerdict,
+      spanBreakdown,
+    },
+    {
+      key: 'depth',
+      label: '层级深度',
+      value: depth,
+      unit: '层',
+      status: depthStatusVal,
+      verdict: depthVerdict,
+      depthBreakdown,
+    },
+    {
+      key: 'managerRatio',
+      label: '管理者比',
+      value: managerRatio,
+      unit: '%',
+      status: managerRatioStatusVal,
+      verdict: managerRatioVerdict,
+      managerBreakdown,
+    },
     { key: 'vacancy', label: '空岗率', value: vacancy, unit: '%', status: vacancyStatusVal, verdict: vacancyVerdict },
   ];
 }
@@ -561,10 +847,10 @@ export type DiagnosticMetricKey = L2Metric['key'];
  * 供 UI 展开「口径说明」使用；文案来自 HR 审计。
  */
 export const METRIC_CALIBER_NOTES: Record<DiagnosticMetricKey, string> = {
-  span: '管理幅度 = 有负责人部门的平均直管人数（直属下属总数 ÷ 有负责人部门数）。它是平均值，不反映单点失衡——一个管理宽到失控的部门可能被其它窄部门抹平；只统计设有负责人的部门，未设负责人的部门不计入。',
-  depth: '层级深度 = 组织树的最大层数（根 L1=1）。它只评估深度，不评估每层人数；深链结构（零售/医院/教育等行业）可能正是业务所需，别据此一律压层。',
-  managerRatio: '管理者比 = 去重负责人数 ÷ 员工总数（含管理者本人）。未剔除兼岗/副职/外部负责人，比值可能被抬高；请结合实际情况解读。',
-  vacancy: '空岗率 =（有效编制 − 实际）÷ 有效编制。只统计配置了编制的部门；对编制是否真实填写敏感——编制未填时提示“无数据”而非视为健康。',
+  span: '管理幅度 = 有负责人部门「直管人数」的中位数（直管 = 节点直挂员工 + 下一层有负责人子部门数）。中位数对极端值稳健，均值（仅作参考）不再主导判定；另展示最小/最大与部门级明细，最宽的部门单独标出、单点失衡不会被其它窄部门抹平。未设负责人的部门不参与统计，其缺失另见「负责人无人直管/未配置负责人」提示。',
+  depth: '层级深度 = 部门节点深度分布（根 L1=1）的 P90 为主判（代表「大多数部门在第几层」），同时给出 P50 典型深度、最大层数与最深链路的部门定位。最大层数只代表最坏链，不代表大多数部门；孤立深链会触发至少「关注」、超过硬上限触发「预警」。深链（零售/医院/教育）可能正是业务所需，别据此一律压层。',
+  managerRatio: '管理者比 = 内部负责人数（去重、剔除不在员工名册内的外部负责人）÷ 员工总数（含管理者、不含虚拟兼岗）。兼岗/副职/挂名负责人暂无法用现有字段精确剔除，比值可能仍偏高，请结合实际情况解读；另附「非管理者口径」供对照（每 N 名非管理员工配 1 名管理者）。',
+  vacancy: '空岗率 =（有效编制 − 实际）÷ 有效编制。只统计配置了编制的部门；编制未填时提示“无数据”而非视为健康。空岗可能是战略储备也可能是冗余，请结合业务确认；编制是否真实填写由 HR 复核。',
 };
 
 /** 取某指标口径说明。 */
@@ -721,8 +1007,8 @@ export function generateSuggestions(metrics: L2Metric[]): HealthSuggestion[] {
           m.value === null
             ? '当前未设置部门负责人，无法评估管理幅度。建议为关键部门配置负责人，明确汇报线。'
             : m.status === 'danger'
-              ? `当前平均管理幅度 ${m.value} 人，明显失衡。建议拆分过宽部门或合并过窄小组，使每名经理直管 ${DEFAULT_HEALTH_THRESHOLDS.spanHealthyMin}-${DEFAULT_HEALTH_THRESHOLDS.spanHealthyMax} 人。`
-              : `当前平均管理幅度 ${m.value} 人，偏离最佳区间。建议优化汇报线，适当调整管理层级。`,
+              ? `当前管理幅度（中位数）${m.value} 人，明显失衡。建议拆分过宽部门或合并过窄小组，使每名经理直管 ${DEFAULT_HEALTH_THRESHOLDS.spanHealthyMin}-${DEFAULT_HEALTH_THRESHOLDS.spanHealthyMax} 人。`
+              : `当前管理幅度（中位数）${m.value} 人，偏离最佳区间。建议优化汇报线，适当调整管理层级。`,
           sev,
         );
         break;
@@ -733,8 +1019,8 @@ export function generateSuggestions(metrics: L2Metric[]): HealthSuggestion[] {
           m.value === 0
             ? '当前没有部门数据，无法评估层级。请先导入或创建组织架构。'
             : m.status === 'danger'
-              ? `层级深度达 ${m.value} 层，决策链路过长。建议压缩中间层级，缩短决策半径。`
-              : `层级深度 ${m.value} 层，偏深。可考虑合并同层级小组或减少冗余汇报层。`,
+              ? `典型层级深度（P90）${m.value} 层，最深 ${m.depthBreakdown?.max ?? m.value} 层，决策链路过长。建议压缩中间层级，缩短决策半径。`
+              : `典型层级深度（P90）${m.value} 层，偏深。可考虑合并同层级小组或减少冗余汇报层。`,
           sev,
         );
         break;
@@ -745,8 +1031,8 @@ export function generateSuggestions(metrics: L2Metric[]): HealthSuggestion[] {
           m.value === null
             ? '当前无员工数据，无法评估管理者占比。'
             : m.status === 'danger'
-              ? `管理者占比达 ${m.value}%，头重脚轻。建议精简管理岗或扩大基层。`
-              : `管理者占比 ${m.value}%，偏高。注意控制成本与官僚化倾向。`,
+              ? `内部管理者占比达 ${m.value}%，头重脚轻。建议精简管理岗或扩大基层。`
+              : `内部管理者占比 ${m.value}%，偏高。注意控制成本与官僚化倾向。`,
           sev,
         );
         break;
@@ -785,9 +1071,10 @@ export function generateDeptSuggestions(
   for (const row of rows) {
     const dept = deptMap.get(row.deptId);
 
-    // 管理幅度：有负责人的部门，直管人数失衡才建议
+    // 管理幅度：有负责人的部门，直管人数失衡才建议（v2.0.9 统一改用 directReports，
+    // 与 L2 中位数口径一致：直管 = 节点直挂 IC + 下一层有负责人子部门数）
     if (dept && (dept.leaderId || dept.leaderName)) {
-      const direct = dept.employees.filter((e) => !e.isVirtual).length;
+      const direct = directReports(dept);
       if (direct === 0) {
         out.push({
           id: `d-${row.deptId}-span0`,
