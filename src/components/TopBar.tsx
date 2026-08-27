@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate } from 'lucide-react';
+import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate, GitCompare } from 'lucide-react';
 import { Scenario } from '../types';
 import { SaveState } from '../utils/useOrgWorkspace';
 import { ScenarioSwitcher } from './ScenarioSwitcher';
@@ -24,6 +24,9 @@ interface TopBarProps {
   onUndo: () => void;
   onRedo: () => void;
   onOpenHealth: () => void;
+  onOpenScenarioDiff: () => void;
+  /** 场景差异比较需要 ≥2 个场景 */
+  canCompare: boolean;
   hasData: boolean;
   onDownloadEmployeeTemplate: () => void;
   onDownloadOrgTemplate: () => void;
@@ -65,6 +68,8 @@ export function TopBar({
   onUndo,
   onRedo,
   onOpenHealth,
+  onOpenScenarioDiff,
+  canCompare,
   hasData,
   onDownloadEmployeeTemplate,
   onDownloadOrgTemplate,
@@ -246,6 +251,16 @@ export function TopBar({
         >
           <Activity className="w-4 h-4" />
           健康度
+        </button>
+
+        <button
+          onClick={onOpenScenarioDiff}
+          disabled={!canCompare}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title={canCompare ? '基线 vs 目标场景 差异比较' : '先复制一个场景再对比'}
+        >
+          <GitCompare className="w-4 h-4" />
+          场景对比
         </button>
 
         <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-lg bg-slate-100/80 border border-slate-200/60">

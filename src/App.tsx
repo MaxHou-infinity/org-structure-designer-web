@@ -7,6 +7,8 @@ import { LevelManagerModal } from './components/LevelManagerModal';
 import { HealthDrawer } from './components/HealthDrawer';
 import { ProjectModal } from './components/ProjectModal';
 import { DiagnosticReport } from './components/DiagnosticReport';
+import { ScenarioDiffView } from './components/ScenarioDiffView';
+import { ManagementReport } from './components/ManagementReport';
 import { SearchModal } from './components/SearchModal';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
@@ -66,6 +68,20 @@ function findDept(depts: Department[], id: string): Department | null {
   return null;
 }
 
+/** 部门 id → 祖先链（含自身，根在前）；不存在返回 null（供画布定位展开祖先）。 */
+function findDeptChain(depts: Department[], id: string): string[] | null {
+  const walk = (list: Department[], path: string[]): string[] | null => {
+    for (const d of list) {
+      const next = [...path, d.id];
+      if (d.id === id) return next;
+      const child = walk(d.children, next);
+      if (child) return child;
+    }
+    return null;
+  };
+  return walk(depts, []);
+}
+
 export default function App() {
   const ws = useOrgWorkspace();
   const {
@@ -101,6 +117,11 @@ export default function App() {
   const [healthFocusDeptId, setHealthFocusDeptId] = useState<string | undefined>();
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  // v2.0.9：场景差异比较 + 管理层报告（运行时派生，不新增持久化字段）
+  const [scenarioDiffOpen, setScenarioDiffOpen] = useState(false);
+  const [diffBaselineId, setDiffBaselineId] = useState<string>('');
+  const [diffTargetId, setDiffTargetId] = useState<string>('');
+  const [mgmtReportOpen, setMgmtReportOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchHighlight, setSearchHighlight] = useState<SearchHighlight>(EMPTY_HIGHLIGHT);
@@ -657,6 +678,100 @@ export default function App() {
     setHealthOpen(true);
   }, []);
 
+  // —— v2.0.9 场景差异比较 ——
+
+  /** 打开差异视图：flushCurrent 确保快照已落盘（S2 实时性）；基线 = 第一个场景，目标 = 当前场景。 */
+  const handleOpenScenarioDiff = useCallback(() => {
+    flushCurrent();
+    const first = project.scenarios[0];
+    const baselineId = first?.id ?? '';
+    const cur = project.currentScenarioId;
+    const targetId =
+      cur && cur !== baselineId
+        ? cur
+        : (project.scenarios.find((s) => s.id !== baselineId)?.id ?? '');
+    setDiffBaselineId(baselineId);
+    setDiffTargetId(targetId);
+    setScenarioDiffOpen(true);
+  }, [flushCurrent, project]);
+
+  const handleSelectDiffBaseline = useCallback(
+    (id: string) => {
+      setDiffBaselineId(id);
+      setDiffTargetId((prev) =>
+        prev === id ? (project.scenarios.find((s) => s.id !== id)?.id ?? prev) : prev,
+      );
+    },
+    [project],
+  );
+
+  const handleSelectDiffTarget = useCallback(
+    (id: string) => {
+      setDiffTargetId(id);
+      setDiffBaselineId((prev) =>
+        prev === id ? (project.scenarios.find((s) => s.id !== id)?.id ?? prev) : prev,
+      );
+    },
+    [project],
+  );
+
+  /** 基线/目标场景对象（选择器状态兜底：id 失效时回退第一个场景） */
+  const baselineScenario = useMemo(
+    () => project.scenarios.find((s) => s.id === diffBaselineId) ?? project.scenarios[0],
+    [project, diffBaselineId],
+  );
+  const targetScenario = useMemo(
+    () => project.scenarios.find((s) => s.id === diffTargetId) ?? currentScenario ?? project.scenarios[0],
+    [project, diffTargetId, currentScenario],
+  );
+
+  /** 差异点回画布定位（部门）：展开祖先链 + 滚动到节点；不在当前场景 → toast 提示。 */
+  const handleLocateDept = useCallback(
+    (deptId: string) => {
+      const chain = findDeptChain(departments, deptId);
+      if (!chain) {
+        showToast('该部门不在当前场景组织中，无法定位');
+        return;
+      }
+      setDepartments((prev) => expandDepartments(prev, new Set(chain)));
+      window.setTimeout(() => {
+        document
+          .querySelector<HTMLElement>(`[data-dept-id="${deptId}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }, 80);
+    },
+    [departments, setDepartments, showToast],
+  );
+
+  /** 差异点回画布定位（员工）：按工号/记录 id 找到当前所属部门并定位；未入架构 → toast 提示。 */
+  const handleLocateEmployee = useCallback(
+    (employeeId: string) => {
+      const findIn = (depts: Department[]): { emp: Employee; deptId: string } | null => {
+        for (const d of depts) {
+          const emp = d.employees.find((e) => e.id === employeeId || e.employeeId === employeeId);
+          if (emp) return { emp, deptId: d.id };
+          const childHit = findIn(d.children);
+          if (childHit) return childHit;
+        }
+        return null;
+      };
+      const found = findIn(departments);
+      if (!found) {
+        showToast('该员工未在当前场景架构中，无法定位');
+        return;
+      }
+      const chain = findDeptChain(departments, found.deptId);
+      setDepartments((prev) => expandDepartments(prev, new Set(chain)));
+      const recordId = found.emp.id;
+      window.setTimeout(() => {
+        document
+          .querySelector<HTMLElement>(`[data-emp-id="${recordId}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }, 80);
+    },
+    [departments, setDepartments, showToast],
+  );
+
   const handleUndo = useCallback(() => {
     undo();
     showToast('已撤销');
@@ -686,6 +801,8 @@ export default function App() {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onOpenHealth={handleOpenHealth}
+        onOpenScenarioDiff={handleOpenScenarioDiff}
+        canCompare={project.scenarios.length >= 2}
         hasData={departments.length > 0}
         onDownloadEmployeeTemplate={handleDownloadEmployeeTemplate}
         onDownloadOrgTemplate={handleDownloadOrgTemplate}
@@ -775,6 +892,8 @@ export default function App() {
         onUpdateHeadcount={handleUpdateHeadcount}
         onExportReport={handleOpenReport}
         currentScenarioName={currentScenario?.name ?? "场景"}
+        scenarios={project.scenarios}
+        onOpenScenarioDiff={handleOpenScenarioDiff}
       />
 
       <ProjectModal
@@ -801,6 +920,34 @@ export default function App() {
         scenarioName={currentScenario?.name ?? "场景"}
         onToast={showToast}
       />
+
+      {scenarioDiffOpen && baselineScenario && targetScenario && (
+        <ScenarioDiffView
+          open={scenarioDiffOpen}
+          onClose={() => setScenarioDiffOpen(false)}
+          baseline={baselineScenario}
+          target={targetScenario}
+          scenarios={project.scenarios}
+          onSelectBaseline={handleSelectDiffBaseline}
+          onSelectTarget={handleSelectDiffTarget}
+          onLocateDept={handleLocateDept}
+          onLocateEmployee={handleLocateEmployee}
+          onExportReport={() => setMgmtReportOpen(true)}
+        />
+      )}
+
+      {mgmtReportOpen && baselineScenario && targetScenario && (
+        <ManagementReport
+          open={mgmtReportOpen}
+          onClose={() => setMgmtReportOpen(false)}
+          baseline={baselineScenario}
+          target={targetScenario}
+          projectName={project.name}
+          onLocateDept={handleLocateDept}
+          onLocateEmployee={handleLocateEmployee}
+          onToast={showToast}
+        />
+      )}
 
       <SearchModal
         open={searchOpen}

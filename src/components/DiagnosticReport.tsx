@@ -238,6 +238,22 @@ export function DiagnosticReport({
               <div key={m.key} className={`rounded-2xl border ${STATUS_STYLE[m.status].border} ${STATUS_STYLE[m.status].bg} shadow-soft p-4`}>
                 <div className="text-xs text-slate-500">{m.label}</div>
                 <div className={`text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>{fmt(m.value, m.unit)}</div>
+                {/* v2.0.9 口径小字：中位数/极值、P50/P90、内部/外部/兼岗 */}
+                {m.key === 'span' && m.spanBreakdown && (
+                  <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                    极值 {fmt(m.spanBreakdown.min)}–{fmt(m.spanBreakdown.max)} 人 · {m.spanBreakdown.count} 个有负责人部门
+                  </div>
+                )}
+                {m.key === 'depth' && m.depthBreakdown && m.depthBreakdown.deptCount > 0 && (
+                  <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                    P50={m.depthBreakdown.p50} 层 · 最深 {m.depthBreakdown.max} 层
+                  </div>
+                )}
+                {m.key === 'managerRatio' && m.managerBreakdown && (
+                  <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                    内部 {m.managerBreakdown.internalManagers}/{m.managerBreakdown.totalEmployees} · 外部 {m.managerBreakdown.externalManagers} · 兼岗 {m.managerBreakdown.multiDeptManagers}
+                  </div>
+                )}
                 <div className="text-xs text-slate-400 mt-1 leading-snug">{m.verdict}</div>
               </div>
             ))}

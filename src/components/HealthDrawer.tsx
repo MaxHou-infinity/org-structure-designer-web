@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
-import { X, RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal } from 'lucide-react';
-import { Department, LevelConfig } from '../types';
+import { X, RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, GitCompare } from 'lucide-react';
+import { Department, LevelConfig, Scenario } from '../types';
 import {
   computeHealthReport,
   HEALTH_STATUS_LABEL,
   HealthStatus,
   HealthThresholds,
   HealthSuggestion,
+  L2Metric,
   SuggestionSeverity,
   collectAllSuggestions,
   getHealthThresholds,
@@ -34,6 +35,9 @@ interface HealthDrawerProps {
   onUpdateHeadcount: (deptId: string, value: number) => void;
   onExportReport: () => void;
   currentScenarioName: string;
+  /** 场景列表（用于「场景对比」入口可用性判断：≥2 场景才可点） */
+  scenarios: Scenario[];
+  onOpenScenarioDiff: () => void;
 }
 
 /** 建议严重级 → 视觉类 */
@@ -99,6 +103,148 @@ function CaliberNote({ note }: { note: string }) {
         </span>
       )}
     </span>
+  );
+}
+
+/** 管理幅度卡补充行（v2.0.9 口径：中位数主值 + 极值 + 部门级直管分布，可展开定位） */
+function SpanCardExtra({
+  m,
+  thresholds,
+  onFocusDept,
+}: {
+  m: L2Metric;
+  thresholds: HealthThresholds;
+  onFocusDept: (deptId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const b = m.spanBreakdown;
+  if (!b || b.count === 0) return null;
+  const widest = b.distribution[0];
+  const exceeded = b.max !== null && b.max > thresholds.spanWarnMax;
+  return (
+    <div className="mt-2">
+      <div className="text-[11px] text-slate-400 leading-snug">
+        极值 {fmt(b.min)}–{fmt(b.max)} 人 · {b.count} 个有负责人部门
+        {widest && (
+          <span className={exceeded ? 'text-red-500 font-medium' : 'text-slate-500'}>
+            {' '}
+            · 最宽 {widest.deptName} {widest.directReports} 人{exceeded ? '（超出关注上限）' : ''}
+          </span>
+        )}
+      </div>
+      {b.distribution.length > 1 && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="mt-1 text-[10px] text-indigo-500 hover:underline font-medium"
+        >
+          {open ? '收起直管分布 ▲' : '展开直管分布 ▼'}
+        </button>
+      )}
+      {open && (
+        <div className="mt-1.5 max-h-44 overflow-y-auto rounded-xl border border-slate-100 bg-white/60">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-slate-400 border-b border-slate-100 text-left">
+                <th className="px-2.5 py-1.5 font-medium">部门</th>
+                <th className="px-2 py-1.5 font-medium text-right">直管</th>
+                <th className="px-2.5 py-1.5 font-medium text-right">判读</th>
+              </tr>
+            </thead>
+            <tbody>
+              {b.distribution.map((row) => {
+                const label =
+                  row.directReports === 0
+                    ? '无人直管'
+                    : row.directReports < thresholds.spanHealthyMin
+                      ? '偏窄'
+                      : row.directReports > thresholds.spanWarnMax
+                        ? '过宽'
+                        : row.directReports > thresholds.spanHealthyMax
+                          ? '偏宽'
+                          : '适中';
+                return (
+                  <tr
+                    key={row.deptId}
+                    onClick={() => onFocusDept(row.deptId)}
+                    className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-indigo-50/60"
+                    title="点击定位到画布"
+                  >
+                    <td className="px-2.5 py-1.5 text-slate-600">{row.deptName}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{row.directReports}</td>
+                    <td
+                      className={`px-2.5 py-1.5 text-right font-medium ${
+                        label === '过宽' || label === '无人直管'
+                          ? 'text-red-500'
+                          : label === '偏窄' || label === '偏宽'
+                            ? 'text-amber-500'
+                            : 'text-emerald-500'
+                      }`}
+                    >
+                      {label}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 层级深度卡补充行（v2.0.9 口径：P90 主值 + P50/最深 + 最深链定位） */
+function DepthCardExtra({ m, onFocusDept }: { m: L2Metric; onFocusDept: (deptId: string) => void }) {
+  const b = m.depthBreakdown;
+  if (!b || b.deptCount === 0) return null;
+  return (
+    <div className="mt-2 text-[11px] text-slate-400 leading-snug">
+      <div>
+        P50={b.p50} 层 · P90={b.p90} 层 · 最深 {b.max} 层 · {b.deptCount} 个部门
+      </div>
+      {b.deepestDeptId && (
+        <button
+          type="button"
+          onClick={() => onFocusDept(b.deepestDeptId)}
+          className="mt-1 block text-left text-indigo-500 hover:underline"
+          title="点击定位到画布"
+        >
+          最深链：{b.deepestPath.join(' → ')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 管理者比卡补充行（v2.0.9 口径：内部÷全员 + 非管理者辅助口径 + 外部/兼岗留痕） */
+function ManagerCardExtra({ m }: { m: L2Metric }) {
+  const b = m.managerBreakdown;
+  if (!b) return null;
+  const per =
+    b.nonManagerEmployees > 0 && b.internalManagers > 0
+      ? Math.round(b.nonManagerEmployees / b.internalManagers)
+      : null;
+  const perRatio =
+    b.nonManagerEmployees > 0 && b.internalManagers > 0
+      ? Math.round((b.internalManagers / b.nonManagerEmployees) * 100)
+      : null;
+  return (
+    <div className="mt-2 text-[11px] text-slate-400 leading-snug space-y-0.5">
+      <div>
+        内部 {b.internalManagers} ÷ {b.totalEmployees} 人（含管理者）= {fmt(m.value, '%')}
+      </div>
+      {per !== null && perRatio !== null && (
+        <div>
+          ≈ 每 {per} 名非管理员工配 1 名管理者（非管理者口径 {perRatio}%）
+        </div>
+      )}
+      {(b.externalManagers > 0 || b.multiDeptManagers > 0) && (
+        <div>
+          外部负责人 {b.externalManagers} 已剔除 · 兼岗 {b.multiDeptManagers} 已去重
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -186,6 +332,8 @@ export function HealthDrawer({
   onUpdateHeadcount,
   onExportReport,
   currentScenarioName,
+  scenarios,
+  onOpenScenarioDiff,
 }: HealthDrawerProps) {
   const configs = useLevelConfigs();
   const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
@@ -246,9 +394,23 @@ export function HealthDrawer({
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               数据快照 · 基于当前场景「{currentScenarioName}」
+              {scenarios.length < 2 && ' · 单场景：先复制一个场景再对比'}
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenScenarioDiff}
+              disabled={scenarios.length < 2}
+              title={scenarios.length >= 2 ? '基线 vs 目标场景 差异比较' : '先复制一个场景再对比'}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium border transition-all ${
+                scenarios.length >= 2
+                  ? 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100'
+                  : 'text-slate-300 border-slate-200 bg-slate-50 cursor-not-allowed'
+              }`}
+            >
+              <GitCompare className="w-4 h-4" />
+              场景对比
+            </button>
             <button
               onClick={onExportReport}
               disabled={departments.length === 0}
@@ -390,6 +552,11 @@ export function HealthDrawer({
                   <div className={`mt-1 text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>
                     {fmt(m.value, m.unit)}
                   </div>
+                  {m.key === 'span' && (
+                    <SpanCardExtra m={m} thresholds={thresholds} onFocusDept={onFocusDept} />
+                  )}
+                  {m.key === 'depth' && <DepthCardExtra m={m} onFocusDept={onFocusDept} />}
+                  {m.key === 'managerRatio' && <ManagerCardExtra m={m} />}
                   <div className="text-xs text-slate-400 mt-1.5 leading-snug">{m.verdict}</div>
                 </div>
               ))}
