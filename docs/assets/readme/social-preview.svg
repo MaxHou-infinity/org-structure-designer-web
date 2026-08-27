@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">组织罗盘 OrgCompass</title>
+  <desc id="desc">从组织架构设计到组织健康诊断的本地优先工作台</desc>
+  <defs>
+    <linearGradient id="shade" x1="0" x2="1">
+      <stop offset="0" stop-color="#111827" stop-opacity="0.92"/>
+      <stop offset="0.52" stop-color="#111827" stop-opacity="0.66"/>
+      <stop offset="1" stop-color="#111827" stop-opacity="0.08"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" x2="1">
+      <stop stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.36"/>
+    </filter>
+    <clipPath id="screenClip">
+      <rect x="697" y="141" width="520" height="292" rx="18"/>
+    </clipPath>
+  </defs>
+
+  <image x="0" y="0" width="1280" height="640" preserveAspectRatio="xMidYMid slice" href="orgcompass-brand-background.png" xlink:href="orgcompass-brand-background.png"/>
+  <rect width="1280" height="640" fill="url(#shade)"/>
+
+  <g transform="translate(64 64)">
+    <rect width="54" height="54" rx="15" fill="url(#brand)"/>
+    <path d="M16 18h22M16 27h22M16 36h22M20 14v28M34 14v28" stroke="#fff" stroke-width="2.6" stroke-linecap="round" opacity="0.95"/>
+    <circle cx="27" cy="27" r="5" fill="#fff"/>
+  </g>
+
+  <text x="64" y="176" fill="#fff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="58" font-weight="750" letter-spacing="-1">组织罗盘</text>
+  <text x="64" y="221" fill="#c4b5fd" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="26" font-weight="650" letter-spacing="0.8">OrgCompass</text>
+  <text x="64" y="286" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="28" font-weight="600">从画组织架构，到看懂组织问题</text>
+  <text x="64" y="333" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="20">为 HRBP / OD 打造的组织设计与健康诊断工作台</text>
+
+  <g transform="translate(64 391)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="17" font-weight="600">
+    <rect width="146" height="42" rx="21" fill="#fff" fill-opacity="0.12" stroke="#fff" stroke-opacity="0.24"/>
+    <circle cx="23" cy="21" r="6" fill="#34d399"/>
+    <text x="40" y="27" fill="#fff">本地处理</text>
+
+    <g transform="translate(160)">
+      <rect width="164" height="42" rx="21" fill="#fff" fill-opacity="0.12" stroke="#fff" stroke-opacity="0.24"/>
+      <circle cx="23" cy="21" r="6" fill="#fbbf24"/>
+      <text x="40" y="27" fill="#fff">健康度诊断</text>
+    </g>
+
+    <g transform="translate(338)">
+      <rect width="150" height="42" rx="21" fill="#fff" fill-opacity="0.12" stroke="#fff" stroke-opacity="0.24"/>
+      <circle cx="23" cy="21" r="6" fill="#818cf8"/>
+      <text x="40" y="27" fill="#fff">方案推演</text>
+    </g>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="681" y="125" width="552" height="324" rx="26" fill="#fff" fill-opacity="0.96"/>
+    <rect x="696" y="140" width="522" height="294" rx="19" fill="#eef2ff"/>
+    <image x="697" y="141" width="520" height="292" preserveAspectRatio="xMidYMid slice" clip-path="url(#screenClip)" href="product-health.png" xlink:href="product-health.png"/>
+  </g>
+
+  <g transform="translate(730 480)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+    <rect width="438" height="78" rx="18" fill="#0f172a" fill-opacity="0.78" stroke="#fff" stroke-opacity="0.16"/>
+    <text x="24" y="31" fill="#a5b4fc" font-size="15" font-weight="700">DESIGN → DIAGNOSE → DECIDE</text>
+    <text x="24" y="57" fill="#fff" font-size="18" font-weight="600">设计组织 · 识别问题 · 比较方案</text>
+  </g>
+</svg>

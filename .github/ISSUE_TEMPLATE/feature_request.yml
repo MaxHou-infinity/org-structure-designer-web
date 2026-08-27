@@ -1,0 +1,43 @@
+name: 功能建议
+description: 从真实 HRBP / OD 工作场景提出产品建议
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        好建议应先讲清工作场景与决策结果，再描述功能形态。
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 工作场景
+      description: 在什么组织设计或诊断任务中遇到了问题？
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: 当前做法与困难
+      description: 现在如何处理？最耗时或最容易出错的地方是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 希望得到的结果
+      description: 完成后，你希望看到什么可验证的输出或决策依据？
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 可选方案
+      description: 如果已有界面或交互想法，可以在这里补充。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我不会在公开 Issue 中提交真实员工或组织敏感信息。
+          required: true

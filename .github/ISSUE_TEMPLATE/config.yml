@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全与隐私问题
+    url: https://github.com/MaxHou-infinity/orgcompass/security
+    about: 请通过私密渠道报告数据泄露、文件访问或供应链安全问题。
+  - name: 下载最新版
+    url: https://github.com/MaxHou-infinity/orgcompass/releases/latest
+    about: 提交问题前，请先确认是否可以在最新版本复现。

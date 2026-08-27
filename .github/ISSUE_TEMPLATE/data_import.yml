@@ -1,0 +1,55 @@
+name: Excel / 数据导入问题
+description: 报告字段识别、模板兼容或导入结果异常
+title: "[Import] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿上传真实员工表。需要样例时，请只提供包含虚构人员的最小复现文件。
+  - type: input
+    id: version
+    attributes:
+      label: OrgCompass 版本
+      placeholder: 例如 v2.0.7
+    validations:
+      required: true
+  - type: dropdown
+    id: import_type
+    attributes:
+      label: 导入类型
+      options:
+        - 员工信息 Excel
+        - 组织架构 Excel
+        - .orgproj 项目文件
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: headers
+    attributes:
+      label: 字段名与数据形态
+      description: 列出表头和一行虚构示例，不要粘贴真实人员信息。
+      placeholder: "姓名 | 部门 | 岗位 | 职级\n张三 | 示例部门 | 示例岗位 | L2.1"
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 导入结果
+      description: 哪些字段未识别、结构异常或出现错误提示？
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: 最小匿名样例（可选）
+      description: 如需附件，请只上传虚构数据，并删除隐藏工作表、批注和文件属性中的敏感信息。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已对示例、截图和附件做匿名化处理。
+          required: true

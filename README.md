@@ -1,164 +1,222 @@
 <div align="center">
 
+![组织罗盘 OrgCompass：从组织架构设计到组织健康诊断](docs/assets/readme/social-preview.png)
+
 # 组织罗盘 · OrgCompass
 
-**从画组织架构，到看懂组织问题 —— 一款给 HRBP / 组织发展（OD）的专业工作台**
+**从画组织架构，到看懂组织问题。**<br>一款面向 HRBP / 组织发展（OD）的本地优先组织设计与健康诊断工作台。
 
-[English](#) · [中文](#) &nbsp;|&nbsp; **Web + Tauri 桌面双端** · **数据 100% 本地**
+[![Latest release](https://img.shields.io/github/v/release/MaxHou-infinity/orgcompass?display_name=tag&label=release&color=6d5dfc)](https://github.com/MaxHou-infinity/orgcompass/releases/latest) [![License](https://img.shields.io/github/license/MaxHou-infinity/orgcompass?color=2563eb)](LICENSE) ![Platforms](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%7C%20Windows-334155) ![Local first](https://img.shields.io/badge/data-local--first-16a34a)
 
-<div align="center">
-
-![OrgCompass banner](docs/assets/banner.jpg)
-
-</div>
+**[下载最新版](https://github.com/MaxHou-infinity/orgcompass/releases/latest)** · **[查看功能](#核心能力)** · **[了解诊断口径](#诊断如何工作)** · **[反馈问题](https://github.com/MaxHou-infinity/orgcompass/issues/new/choose)**
 
 </div>
 
 ---
 
-## ✨ 你在用什么工具画组织架构？
+## 30 秒了解 OrgCompass
 
-传统的组织架构工具，只是一个"画框"——你可以拉几个方框、连几条线，但**画完就结束了**。你仍然要自己盯着图，去数每个部门管几个人、几个层级、有没有空岗、哪里超编。
+很多组织架构工具停在“把框画出来”。OrgCompass 继续往前一步：把组织数据变成可检查、可推演、可交付的决策材料。
 
-**组织罗盘（OrgCompass）** 不一样。它把"画图"当成起点，把"看懂组织"当成终点：
+![OrgCompass 工作流：导入、建模、诊断、推演、输出](docs/assets/readme/workflow.svg)
 
-> **不只是画得出来，更要看得懂。**
-
-它把 HRBP 的实战判断，直接做进产品里——一张图，同时回答"这个组织长什么样"和"这个组织健不健康、该改哪"。
-
----
-
-## 🧭 核心价值：从「画图」到「决策」
-
-| 传统工具 | 组织罗盘 OrgCompass |
+| 你正在解决的问题 | OrgCompass 给出的结果 |
 | --- | --- |
-| 画一张静态组织树 | 画的同时自动算**健康度**，红/黄/绿灯实时判读 |
-| 导出图片就完了 | 一键生成**组织优化建议**（20+ 条部门级、可落地） |
-| 手动数编制、盯空岗 | **编制 vs 实际 vs 缺口**，含**职级成本**，一目了然 |
-| 人搬来搬去靠脑补 | **拖拽批量移动 + 撤销**，像操作白板一样改组织 |
+| 组织调整前，方案只存在于脑中 | 保存基线、方案 A、方案 B，分别推演组织结构 |
+| 管理层级、管理幅度靠人工逐个数 | 自动计算并用红 / 黄 / 绿状态提示异常 |
+| 编制、实际人数和招聘缺口分散在表格里 | 按部门汇总编制、实际、空岗 / 超编和职级成本 |
+| 组织图画完后仍要手工整理汇报材料 | 导出组织图、Excel 和包含建议的诊断报告 |
+
+> OrgCompass 的目标不是替 HRBP 做判断，而是把判断所需的结构、指标和差异摆到同一张工作台上。
 
 ---
 
-## 🚀 核心功能
+## 真实产品界面
 
-### 1. 组织架构设计（不只是画图）
-- **树状多级部门**（L1–L6），带**父子引导线**，层级从属一眼看清
-- 部门卡片：名称、负责人、成员、**编制数**、**职级成本**
-- 拖拽部门调整层级、拖拽员工到目标部门、框选/**批量移动**（可撤销）
-- 双击改名、右键创建虚拟员工（兼岗）、负责人搜索选择
-- **双指捏合缩放 / 双指滑动或空白区拖拽平移**（触控板友好，类地图手感）
+![OrgCompass 组织健康度面板：管理幅度、层级深度、管理者比与空岗率](docs/assets/readme/product-health.png)
 
-### 2. 组织健康度分析（核心差异化）
-- **L1 部门概览**：管理幅度、层级深度、管理者比、空岗率
-- **红/黄/绿 阈值判读** + 一句话诊断
-- **L3 编制 vs 实际 vs 缺口**（含职级成本）
-- **自动优化建议**：基于指标生成 20+ 条**部门级**建议（如"XX 部门管理幅度偏窄，建议合并小组"）
-- 一键导出**诊断报告**（指标卡 + 组织图 + 明细表，可打印/PDF/PNG）
-
-### 3. 数据与协作
-- 上传员工 / 组织架构 **Excel** 模板，一键重建结构
-- **自动保存** + 项目文件（`.orgproj`）保存 / 打开（刷新不丢、可备份换机）
-- **场景快照**：同一组织多版演练（基线 / 方案 A / 方案 B …）
-- 导出 **PNG / Excel**
-
-### 4. 内置行业模板 & 新手引导
-- 互联网 / 制造 / 零售 / 医院科层，一键载入示例
-- 三步新手引导 + 空状态引导，上手即用
+上图为真实运行界面。健康度面板会根据当前场景实时计算指标，标记需要关注的部门，并把异常项转化为可追溯的优化建议。
 
 ---
 
-## 🖼️ 界面预览
+## 核心能力
 
-![真实应用渲染](docs/assets/org-chart.png)
+### 1. 设计组织，而不只是画组织图
 
-> 上图：真实的部门树渲染（含父子引导线、统一间距、父部门居中于子部门块）。
+- L1–L6 多级部门树与清晰的父子引导线
+- 拖拽部门调整层级，拖拽或框选批量移动员工
+- 部门负责人、岗位、职级、编制和成本信息同图呈现
+- 搜索定位、撤销 / 重做、触控板缩放与画布平移
+- 兼岗人员、未入架构员工和负责人选择
+
+### 2. 看见组织健康度
+
+- 管理幅度、层级深度、管理者比、空岗率四项核心指标
+- 红 / 黄 / 绿状态判读与整体诊断
+- 编制 vs 实际 vs 缺口，联动职级成本
+- 根据指标和部门异常生成规则化建议
+- 阈值可按企业阶段和管理口径调整，并保存在本地
+
+### 3. 推演方案，而不是覆盖原方案
+
+- 基线、方案 A、方案 B 等多个场景快照
+- 自动保存与撤销 / 重做
+- `.orgproj` 项目文件保存、打开和换机备份
+- 在同一份组织数据上尝试不同汇报线和人员安排
+
+### 4. 从数据输入到报告输出
+
+- 导入员工 Excel 与组织架构 Excel
+- 互联网科技、制造业、零售连锁、医院科层、教育服务模板
+- 导出 PNG、Excel 和组织诊断报告
+- Web 与 Tauri 桌面端共用同一套数据模型
 
 ---
 
-## 💻 运行方式
+## 适合哪些工作场景
 
-| 形态 | 适用场景 | 运行 |
+| 场景 | 典型问题 | 推荐用法 |
 | --- | --- | --- |
-| **🌐 Web 版** | 浏览器直接用 / 部署静态托管 | `npm run dev` 或部署 `dist/` |
-| **🖥️ Tauri 桌面版** | 本地安装，无需服务器，适合分发给同事 | `npm run tauri:build` 产出安装包 |
-
-> 选桌面版：不需要服务器即可在本地运行，安装包约 5–10MB（Tauri 内核，远小于 Electron）。
-
----
-
-## 🛠️ 技术栈
-
-React 18 · TypeScript (strict) · Vite 6 · Tailwind CSS · @dnd-kit · Tauri 2 (Rust) · xlsx · html2canvas · Lucide React · Vitest
-
-- **性能**：html2canvas / xlsx 动态导入，主包 852KB → 223KB（-74%）
-- **质量**：158 单元测试全绿；`tsc -b --force` 零错误；ESLint 零错误；Rust `cargo check` 通过
+| 组织调整 | 新旧方案差异难以讲清 | 保存基线并建立多个场景，分别调整部门与汇报线 |
+| 年度编制规划 | 编制、缺口、成本来回对表 | 导入员工数据，补齐部门编制和职级成本，查看缺口汇总 |
+| 组织健康体检 | 不知道哪里层级过深、管理幅度异常 | 打开健康度面板，按红黄绿状态定位部门和指标 |
+| 招聘协同 | 招聘需求缺少组织上下文 | 用部门缺口和成本信息形成更清晰的需求依据 |
+| 管理层汇报 | 组织图与诊断结论分散 | 导出组织图、明细表和诊断报告作为讨论底稿 |
 
 ---
 
-## 🚦 快速开始
+## 诊断如何工作
+
+OrgCompass 当前使用透明、可配置的规则口径，不使用不可解释的“黑盒评分”。
+
+| 指标 | 当前计算口径 | 默认健康区间 |
+| --- | --- | --- |
+| 管理幅度 | 有负责人部门的直属员工总数 ÷ 有负责人部门数 | 3–8 人 |
+| 层级深度 | 组织树从 L1 开始计算的最大层数 | 不超过 4 层 |
+| 管理者比 | 去重后的部门负责人数 ÷ 员工总数 | 不超过 15% |
+| 空岗率 | （有效编制数 − 实际人数）÷ 有效编制数 | 不超过 10% |
+
+- 阈值可以在健康度面板中调整，默认值只是通用起点。
+- 未设置负责人、编制或员工数据时，系统会说明无法计算的原因，不把缺失数据伪装成健康结论。
+- 优化建议由异常指标与部门数据触发，数量随当前组织情况变化。
+
+> **使用边界：** 指标用于发现值得讨论的结构性信号，不替代业务背景、人才判断、劳动关系和管理责任。
+
+---
+
+## 下载与运行
+
+### 普通用户：下载桌面版
+
+前往 **[Latest Release](https://github.com/MaxHou-infinity/orgcompass/releases/latest)**，根据系统选择安装包：
+
+| 系统 | 支持范围 | 推荐文件 |
+| --- | --- | --- |
+| macOS | Apple Silicon（arm64） | `OrgCompass_*_aarch64.dmg` |
+| Windows | 64 位（x64） | `OrgCompass_*_x64-setup.exe` |
+| Windows 管理部署 | 64 位（x64） | `OrgCompass_*_x64_en-US.msi` |
+
+当前版本不提供 Intel Mac 与 Linux 安装包。v2.0.5 及以前的历史 Release 可能仍包含旧平台资产。
+
+### 开发者：运行 Web 版
+
+Web 版目前提供源码运行与自行部署，不代表已有公开在线服务。
 
 ```bash
-# 安装依赖
-npm install
-
-# Web 开发模式
+git clone https://github.com/MaxHou-infinity/orgcompass.git
+cd orgcompass
+npm ci
 npm run dev
+```
 
-# 构建 Web 生产版（dist/）
+构建静态 Web 产物：
+
+```bash
 npm run build
+npm run preview
+```
 
-# 代码检查 + 单元测试
+### 开发者：运行 Tauri 桌面版
+
+macOS 需要 Xcode Command Line Tools 与 Rust；Windows 需要 WebView2 与 Rust。
+
+```bash
+npm run tauri:dev
+npm run tauri:build
+```
+
+---
+
+## 数据与隐私
+
+OrgCompass 采用本地优先设计：
+
+- 不需要账号或业务服务器即可运行
+- 当前版本不包含云端同步、组织数据上传或遥测服务
+- Web 版自动保存到浏览器本地存储
+- 桌面版可通过 `.orgproj` 文件备份和迁移项目
+- Excel、组织结构与诊断计算均在本机完成
+
+组织和人员数据通常具有敏感性。请使用企业认可的设备与文件存储方式，并妥善管理导出的图片、Excel、报告和项目备份。
+
+---
+
+## Roadmap
+
+路线图表达产品方向，不等同于具体版本或发布日期承诺。
+
+### Now · 让组织诊断更容易落地
+
+- 更清晰的数据导入校验与错误解释
+- 更直观的场景差异比较与管理层报告
+- 更可靠的安装、升级和示例体验
+
+### Next · 从组织树深入岗位与编制
+
+- 组织—岗位—编制—人员的完整视图
+- 可复用的行业 / 企业阶段诊断基准
+- 面向招聘 BP 的岗位缺口与成本视图
+
+### Exploring · 人岗匹配与排兵布阵
+
+- 干部与员工胜任度的可视化表达
+- 评分依据、差距与结论的可追溯设计
+- 权限、隐私、评价偏差与人工复核机制
+
+欢迎通过 [Issues](https://github.com/MaxHou-infinity/orgcompass/issues/new/choose) 提交场景、问题和建议。
+
+---
+
+## 技术与质量
+
+React 18 · TypeScript strict · Vite 6 · Tailwind CSS · dnd-kit · Tauri 2 · Rust · xlsx · html2canvas · Vitest
+
+```bash
 npm run lint
 npm run test
+npm run build
 ```
 
-### Tauri 桌面版
+目录结构：
 
-> 前置：macOS 需 [Xcode Command Line Tools](https://developer.apple.com/xcode/) + [Rust](https://rustup.rs/)；Windows 需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（Win11 自带）+ Rust。
-
-```bash
-npm run tauri:dev      # 桌面版开发（热重载）
-npm run tauri:build    # 构建安装包（.dmg /.exe /.AppImage 等）
-```
-
-桌面版与 Web 版共用同一套前端代码：运行时自动检测 Tauri 环境，导出文件走原生"另存为"对话框（浏览器环境回退为下载）。
-
----
-
-## 📁 目录结构
-
-```
-├── src/
-│   ├── components/      # OrgChart / DepartmentCard / Sidebar / TopBar 等
-│   ├── utils/           # excel / analytics / search / history / zoom / tauri
-│   ├── types/           # 类型定义
-│   ├── App.tsx          # 主应用
-│   └── main.tsx         # 入口
-├── src-tauri/           # Tauri 桌面端（Rust 主进程 + dialog/fs 插件）
-├── docs/                # 设计文档 & 视觉素材
-└── package.json
+```text
+├── src/                 # React 应用、组件、分析逻辑与测试
+├── src-tauri/           # Tauri 桌面端与 Rust 配置
+├── docs/                # 设计记录与 README 视觉资产
+└── .github/workflows/   # 多平台 Release 构建
 ```
 
 ---
 
-## 🔍 关键词
+## 许可证
 
-`组织罗盘` · `OrgCompass` · `组织架构设计` · `组织架构图` · `组织健康度分析` · `HRBP 工具` · `OD 组织发展` · `组织诊断` · `Org Chart` · `Organizational Design` · `Org Health` · `Tauri` · `React` · `Org Structure Designer`
+[Apache License 2.0](LICENSE) © 2026 [Max Hou](https://github.com/MaxHou-infinity)
 
----
+允许商用、修改和分发；请按许可证要求保留版权与许可证声明，并标注修改。
 
-## 📄 许可证
+<details>
+<summary>品牌与历史安装包兼容说明</summary>
 
-**Apache License 2.0** © 2026 [Max Hou (MaxHou-infinity)](https://github.com/MaxHou-infinity)
+项目已由 `OrgStructureDesigner` 升级为 **组织罗盘 OrgCompass**。v2.0.4 及以前的安装包仍使用旧文件名前缀；自 v2.0.5 起使用 `OrgCompass_*`。历史安装包名称不同不影响其对应版本功能。
 
-使用、修改或分发本项目（含衍生作品）时，**必须保留原作者版权声明与署名，并在修改文件上注明变更**。
-
-- ✅ 允许：商用、修改、分发、专利授权
-- 📌 要求：保留版权声明、注明修改、附上许可证副本
-- 🚫 禁止：使用作者名义进行背书或推广
-
----
-
-> **品牌**：项目已升级为 **组织罗盘 OrgCompass**（仓库名 `orgcompass`，`package.json` / Tauri `productName`+`identifier` / 界面品牌均已同步）。
->
-> **版本兼容说明**：仓库改名与品牌升级前的安装包（v2.0.4）仍以旧名 `OrgStructureDesigner_*` 发布；**自 v2.0.5 起**，新建安装包将统一为 `OrgCompass_*` 命名。
+</details>
