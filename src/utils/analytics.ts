@@ -173,6 +173,87 @@ export function resetHealthThresholds(): void {
   }
 }
 
+/** —— —— v2.0.8：企业阶段情景基准预设（只做“阶段”，不做“行业”） —— —— */
+
+/** 企业阶段 */
+export type OrganizationStage = 'startup' | 'growth' | 'mature';
+
+/** 阶段预设：含标签、描述与对应阈值 */
+export interface StagePreset {
+  id: OrganizationStage;
+  label: string;
+  description: string;
+  thresholds: HealthThresholds;
+}
+
+/**
+ * 三档阶段基准（值来自 HR 审计档位值）。
+ * 注意：growth 即当前默认口径（= DEFAULT_HEALTH_THRESHOLDS）。
+ * 每一档 description 均注明「基准仅供参考，需结合本企业业务阶段校准」。
+ */
+export const STAGE_PRESETS: Record<OrganizationStage, StagePreset> = {
+  startup: {
+    id: 'startup',
+    label: '初创期',
+    description: '组织快速搭建、管理上线，基准仅供参考，需结合本企业业务阶段校准。',
+    thresholds: {
+      spanHealthyMin: 2,
+      spanHealthyMax: 7,
+      spanWarnLow: 1,
+      spanWarnMax: 10,
+      depthHealthyMax: 3,
+      depthWarnMax: 4,
+      managerHealthyMax: 20,
+      managerWarnMax: 30,
+      vacancyHealthyMax: 15,
+      vacancyWarnMax: 25,
+      overWarnRatio: 0.25,
+    },
+  },
+  growth: {
+    id: 'growth',
+    label: '成长期',
+    description: '快速扩张、层级与汇报线逐渐成形，基准仅供参考，需结合本企业业务阶段校准。',
+    thresholds: { ...DEFAULT_HEALTH_THRESHOLDS },
+  },
+  mature: {
+    id: 'mature',
+    label: '成熟期',
+    description: '组织稳定、流程固化，基准仅供参考，需结合本企业业务阶段校准。',
+    thresholds: {
+      spanHealthyMin: 5,
+      spanHealthyMax: 9,
+      spanWarnLow: 1,
+      spanWarnMax: 14,
+      depthHealthyMax: 5,
+      depthWarnMax: 7,
+      managerHealthyMax: 18,
+      managerWarnMax: 25,
+      vacancyHealthyMax: 8,
+      vacancyWarnMax: 15,
+      overWarnRatio: 0.15,
+    },
+  },
+};
+
+/** 默认阶段 = 成长期（= 当前默认阈值） */
+export const DEFAULT_STAGE: OrganizationStage = 'growth';
+
+/** 取某阶段阈值（返回副本，避免调用方误改原始预设）。 */
+export function getStagePresetThresholds(stage: OrganizationStage): HealthThresholds {
+  return { ...STAGE_PRESETS[stage].thresholds };
+}
+
+/** 应用某阶段阈值并持久化到 localStorage（复用现有 setHealthThresholds）。 */
+export function setStagePreset(stage: OrganizationStage): void {
+  setHealthThresholds(getStagePresetThresholds(stage));
+}
+
+/** 判断编制是否未配置（headcount 为 null/undefined）—— 供 UI 呈现灰色“无数据”。 */
+export function isHeadcountUnset(headcount: number | null | undefined): boolean {
+  return headcount == null;
+}
+
 /** —— 树遍历辅助 —— */
 
 function countEmployees(dept: Department, includeVirtual: boolean): number {
@@ -417,7 +498,9 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
           : '管理者占比过高，存在头重脚轻';
   }
 
-  // 空岗率（仅统计有效编制 headcount>0）
+  // 空岗率（口径对齐 v2.0.8）：分子 = 已配置编制(headcount>0)部门的编制合计；分母 = 同批已配置编制部门子树内的员工数（不含虚拟兼岗）。
+  // 未配置编制的部门不进分子也不进分母，避免分母虚大压低空岗率。
+  // 覆盖判定：某部门或其任一祖先已配置编制(headcount>0)，则其子树整体计入“已配置”分母（父子同配不重复计）。
   let headcount = 0;
   let foundHeadcount = false;
   for (const d of allDepts) {
@@ -426,11 +509,21 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
       foundHeadcount = true;
     }
   }
+  let configuredActual = 0;
+  const walkConfigured = (list: Department[], covered: boolean) => {
+    for (const d of list) {
+      const inCovered =
+        covered || (typeof d.headcount === 'number' && Number.isFinite(d.headcount) && d.headcount > 0);
+      if (inCovered) configuredActual += d.employees.filter((e) => !e.isVirtual).length;
+      walkConfigured(d.children, inCovered);
+    }
+  };
+  walkConfigured(roots, false);
   let vacancy: number | null = null;
   let vacancyStatusVal: HealthStatus = 'warn';
   let vacancyVerdict = '未配置编制数据，无法计算空岗率';
   if (foundHeadcount && headcount > 0) {
-    vacancy = round1(((headcount - totalEmployees) / headcount) * 100);
+    vacancy = round1(((headcount - configuredActual) / headcount) * 100);
     vacancyStatusVal = vacancyStatus(vacancy, thresholds);
     vacancyVerdict =
       vacancyStatusVal === 'healthy'
@@ -456,6 +549,27 @@ export function computeTreeDepth(roots: Department[]): number {
     return 1 + Math.max(...dept.children.map(walk));
   };
   return Math.max(...roots.map(walk));
+}
+
+/** —— —— v2.0.8：诊断口径说明（来自 HR 审计） —— —— */
+
+/** 诊断指标 key（复用 L2 指标 key） */
+export type DiagnosticMetricKey = L2Metric['key'];
+
+/**
+ * 各诊断指标的口径说明：怎么算 / 含或不含哪些数据 / 不等于什么。
+ * 供 UI 展开「口径说明」使用；文案来自 HR 审计。
+ */
+export const METRIC_CALIBER_NOTES: Record<DiagnosticMetricKey, string> = {
+  span: '管理幅度 = 有负责人部门的平均直管人数（直属下属总数 ÷ 有负责人部门数）。它是平均值，不反映单点失衡——一个管理宽到失控的部门可能被其它窄部门抹平；只统计设有负责人的部门，未设负责人的部门不计入。',
+  depth: '层级深度 = 组织树的最大层数（根 L1=1）。它只评估深度，不评估每层人数；深链结构（零售/医院/教育等行业）可能正是业务所需，别据此一律压层。',
+  managerRatio: '管理者比 = 去重负责人数 ÷ 员工总数（含管理者本人）。未剔除兼岗/副职/外部负责人，比值可能被抬高；请结合实际情况解读。',
+  vacancy: '空岗率 =（有效编制 − 实际）÷ 有效编制。只统计配置了编制的部门；对编制是否真实填写敏感——编制未填时提示“无数据”而非视为健康。',
+};
+
+/** 取某指标口径说明。 */
+export function metricCaliberNote(key: DiagnosticMetricKey): string {
+  return METRIC_CALIBER_NOTES[key];
 }
 
 /** 整体诊断一句话 */

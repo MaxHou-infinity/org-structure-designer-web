@@ -3,6 +3,7 @@ import { Department } from '../types';
 import { useState } from 'react';
 import { useLevelConfigs, fullCode, levelFullLabel } from '../utils/levels';
 import { useDisplaySettings, setDisplaySetting } from '../utils/displaySettings';
+import { validateImportFile, getImportErrorMessage, WARN_IMPORT_FILE_BYTES } from '../utils/excel';
 
 interface SidebarProps {
   onEmployeeFileUpload: (file: File) => void;
@@ -44,8 +45,24 @@ export function Sidebar({
   const [newDeptName, setNewDeptName] = useState('');
   const [newDeptLevel, setNewDeptLevel] = useState(1);
   const [newDeptParent, setNewDeptParent] = useState<string | null>('root');
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
   const levelConfigs = useLevelConfigs();
   const { showLevel, showTitle } = useDisplaySettings();
+
+  /** 文件选择护栏：先做扩展名/大小前置校验，非法即提示并中止，不进入解析；超软阈值给「可能变慢」提醒。 */
+  const handleFileSelect = (file: File, kind: 'employee' | 'org') => {
+    const v = validateImportFile(file);
+    if (!v.ok) {
+      setImportError(getImportErrorMessage(v.error));
+      setImportNotice(null);
+      return;
+    }
+    setImportError(null);
+    setImportNotice(file.size > WARN_IMPORT_FILE_BYTES ? '文件较大，处理可能变慢' : null);
+    if (kind === 'employee') onEmployeeFileUpload(file);
+    else onOrgTemplateUpload(file);
+  };
 
   const handleCreateDept = () => {
     if (!newDeptName.trim()) return;
@@ -91,7 +108,8 @@ export function Sidebar({
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) onEmployeeFileUpload(file);
+                  e.target.value = '';
+                  if (file) handleFileSelect(file, 'employee');
                 }}
               />
             </label>
@@ -108,10 +126,28 @@ export function Sidebar({
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) onOrgTemplateUpload(file);
+                  e.target.value = '';
+                  if (file) handleFileSelect(file, 'org');
                 }}
               />
             </label>
+          </div>
+
+          {/* 导入护栏提示 + 本地处理微文案 */}
+          <div className="space-y-1.5">
+            {importError && (
+              <div className="px-2.5 py-1.5 bg-rose-50 border border-rose-200 rounded-lg text-[11px] leading-snug text-rose-700">
+                {importError}
+              </div>
+            )}
+            {importNotice && (
+              <div className="px-2.5 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] leading-snug text-amber-700">
+                {importNotice}
+              </div>
+            )}
+            <p className="px-1 text-[10px] leading-snug text-slate-400">
+              本机处理，数据不出设备；导入前会做基本格式与大小校验。
+            </p>
           </div>
 
           <button

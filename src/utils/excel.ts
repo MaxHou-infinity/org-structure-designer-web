@@ -1,4 +1,5 @@
 import { Employee, Department, OrgTemplate } from '../types';
+import type { WorkBook } from 'xlsx';
 
 /** 懒加载 xlsx（体积 ~400KB，仅在上传/导出时按需加载） */
 let xlsxModule: typeof import('xlsx') | null = null;
@@ -9,24 +10,171 @@ async function loadXlsx(): Promise<typeof import('xlsx')> {
   return xlsxModule;
 }
 
-/** 读取 Excel 文件第一个工作表并转为 JSON 行 */
-async function readFirstSheet(file: File): Promise<Record<string, unknown>[]> {
+// ───────────────────────── 导入输入加固常量 ─────────────────────────
+
+/** 单个导入文件的硬上限（字节）。超过则拒绝导入。 */
+export const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024; // 50MB
+/** 单个导入文件的软提醒阈值（字节）。超过但未达硬上限时，可提示用户拆分。 */
+export const WARN_IMPORT_FILE_BYTES = 10 * 1024 * 1024; // 10MB
+/** 单个工作表最多解析的行数（含表头）。防止超大表拖垮内存/渲染。 */
+export const MAX_IMPORT_ROWS = 50000;
+/** 支持的 Excel 文件扩展名。 */
+export const SUPPORTED_EXCEL_EXTENSIONS = ['.xlsx', '.xls'] as const;
+
+// ───────────────────────── 导入错误类型 ─────────────────────────
+
+export type ExcelImportErrorKind =
+  | 'size-exceeded'
+  | 'unsupported-type'
+  | 'empty'
+  | 'missing-columns'
+  | 'invalid-structure'
+  | 'parse-failed';
+
+const IMPORT_ERROR_MESSAGES: Record<ExcelImportErrorKind, string> = {
+  'size-exceeded': `文件超过 ${MAX_IMPORT_FILE_BYTES / 1048576}MB，请拆分为多个文件后导入`,
+  'unsupported-type': '不支持的文件类型，请另存为 .xlsx 或 .xls 后导入',
+  'empty': '文件中没有有效的表头或数据行，请使用示例模板整理后再导入',
+  'missing-columns': '文件缺少必填列，请对照示例模板检查表头',
+  'invalid-structure': '文件结构异常，请使用示例模板整理表格后再导入',
+  'parse-failed': '文件解析失败，请确认文件为有效的 Excel 文件',
+};
+
+/**
+ * 导入错误：带 `kind` 便于上层分支处理，`message` 为中文可行动提示。
+ * - kind === 'missing-columns' 时附带 `missingColumns`（缺失的必填列名）。
+ */
+export class ExcelImportError extends Error {
+  readonly kind: ExcelImportErrorKind;
+  readonly missingColumns?: string[];
+
+  constructor(kind: ExcelImportErrorKind, message?: string, missingColumns?: string[]) {
+    if (missingColumns && missingColumns.length > 0) {
+      super(`缺少必填列：${missingColumns.join('、')}，请对照示例模板补充表头后导入`);
+      this.kind = 'missing-columns';
+      this.missingColumns = missingColumns;
+    } else {
+      super(message ?? IMPORT_ERROR_MESSAGES[kind]);
+      this.kind = kind;
+    }
+    this.name = 'ExcelImportError';
+  }
+}
+
+/** 提取文件扩展名（小写，含点，如 '.xlsx'；无扩展名返回 ''） */
+export function getExcelFileExtension(fileName: string): string {
+  const trimmed = (fileName ?? '').trim();
+  const match = /\.[^.]+$/.exec(trimmed);
+  return match ? match[0].toLowerCase() : '';
+}
+
+function isSupportedExtension(ext: string): boolean {
+  return (SUPPORTED_EXCEL_EXTENSIONS as readonly string[]).includes(ext);
+}
+
+/** employee 工作表必填列；org 模板工作表必填列 */
+const REQUIRED_EMPLOYEE_COLUMNS = ['姓名', '一级部门'];
+const REQUIRED_ORG_COLUMNS = ['一级部门'];
+
+// ───────────────────────── 读取与解析 ─────────────────────────
+
+/**
+ * 从内存 buffer 读取第一个工作表并转为 JSON 行。
+ * 测试可直接复用，避免依赖浏览器 FileReader。
+ */
+export async function parseExcelFromBuffer(buffer: ArrayBuffer | Uint8Array): Promise<Record<string, unknown>[]> {
   const XLSX = await loadXlsx();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        resolve(XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet));
-      } catch (error) {
-        reject(error);
-      }
-    };
-    reader.onerror = reject;
-    reader.readAsArrayBuffer(file);
-  });
+  return sheetToRows(XLSX, readWorkbook(XLSX, buffer));
+}
+
+function readWorkbook(XLSX: typeof import('xlsx'), buffer: ArrayBuffer | Uint8Array): WorkBook {
+  try {
+    return XLSX.read(buffer, { type: 'array', dense: true, sheetRows: MAX_IMPORT_ROWS });
+  } catch {
+    throw new ExcelImportError('parse-failed', IMPORT_ERROR_MESSAGES['parse-failed']);
+  }
+}
+
+function sheetToRows(XLSX: typeof import('xlsx'), workbook: WorkBook): Record<string, unknown>[] {
+  const firstSheetName = workbook?.SheetNames?.[0];
+  const firstSheet = firstSheetName ? workbook.Sheets?.[firstSheetName] : undefined;
+  if (!firstSheet) {
+    throw new ExcelImportError('empty', IMPORT_ERROR_MESSAGES['empty']);
+  }
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
+  // 结构异常：sheet 存在但表头为空/非有效列名（SheetJS 会生成 ''、'__N' 之类的占位 key），
+  // 无法据此做字段映射，应视为结构异常而非静默透传。
+  const hasMeaningfulColumn = rows.some((row) =>
+    Object.keys(row).some((key) => key.trim() !== '' && !/^_[0-9]+$/.test(key)),
+  );
+  if (rows.length > 0 && !hasMeaningfulColumn) {
+    throw new ExcelImportError('invalid-structure', IMPORT_ERROR_MESSAGES['invalid-structure']);
+  }
+  return rows;
+}
+
+/** File → ArrayBuffer（浏览器走 FileReader；Node/测试环境用 Blob.arrayBuffer()） */
+async function readFileBuffer(file: File): Promise<ArrayBuffer> {
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  return file.arrayBuffer();
+}
+
+/** 大小/扩展名护栏 + 读取 + 必填列校验，返回 JSON 行 */
+async function readAndValidateFile(file: File, requiredColumns: string[]): Promise<Record<string, unknown>[]> {
+  const ext = getExcelFileExtension(file.name);
+  if (!isSupportedExtension(ext)) {
+    throw new ExcelImportError('unsupported-type', IMPORT_ERROR_MESSAGES['unsupported-type']);
+  }
+  if (file.size > MAX_IMPORT_FILE_BYTES) {
+    throw new ExcelImportError('size-exceeded', IMPORT_ERROR_MESSAGES['size-exceeded']);
+  }
+  const buffer = await readFileBuffer(file);
+  const rows = await parseExcelFromBuffer(buffer);
+  assertRequiredColumns(rows, requiredColumns);
+  return rows;
+}
+
+function assertRequiredColumns(rows: Record<string, unknown>[], requiredColumns: string[]): void {
+  if (rows.length === 0) {
+    throw new ExcelImportError('empty', IMPORT_ERROR_MESSAGES['empty']);
+  }
+  const present = new Set<string>();
+  for (const row of rows) {
+    for (const key of Object.keys(row)) present.add(key);
+  }
+  const missing = requiredColumns.filter((col) => !present.has(col));
+  if (missing.length > 0) {
+    throw new ExcelImportError('missing-columns', IMPORT_ERROR_MESSAGES['missing-columns'], missing);
+  }
+}
+
+/**
+ * UI 在解析前做一次轻量文件校验（大小 + 扩展名），避免直接进入读取流程。
+ */
+export function validateImportFile(file: { name: string; size: number }): { ok: true } | { ok: false; error: ExcelImportError } {
+  const ext = getExcelFileExtension(file.name);
+  if (!isSupportedExtension(ext)) {
+    return { ok: false, error: new ExcelImportError('unsupported-type', IMPORT_ERROR_MESSAGES['unsupported-type']) };
+  }
+  if (file.size > MAX_IMPORT_FILE_BYTES) {
+    return { ok: false, error: new ExcelImportError('size-exceeded', IMPORT_ERROR_MESSAGES['size-exceeded']) };
+  }
+  return { ok: true };
+}
+
+/** 将任意错误转换为对用户友好的中文提示（复用 ExcelImportError.message，其余兜底）。 */
+export function getImportErrorMessage(error: unknown): string {
+  if (error instanceof ExcelImportError) {
+    return error.message;
+  }
+  return '导入失败，请检查文件后重试';
 }
 
 /** 将单元格值安全转换为字符串，过滤空值/'undefined' */
@@ -35,38 +183,50 @@ function cellString(value: unknown): string {
   return str === 'undefined' ? '' : str;
 }
 
-export function parseEmployeeExcel(file: File): Promise<Employee[]> {
-  return readFirstSheet(file).then((json) =>
-    json.map((row, index) => ({
-      id: `emp-${index}-${Date.now()}`,
-      name: cellString(row['姓名']),
-      employeeId: cellString(row['工号']),
-      level: cellString(row['职级']) || 'NA',
-      title: cellString(row['岗位'] ?? row['职位']) || 'NA',
-      dept1: cellString(row['一级部门']),
-      dept2: cellString(row['二级部门']),
-      dept3: cellString(row['三级部门']),
-      dept4: cellString(row['四级部门']),
-      dept5: cellString(row['五级部门']),
-      dept6: cellString(row['六级部门']),
-    })),
-  );
+// ───────────────────────── 行 → 领域对象映射 ─────────────────────────
+
+/** 员工行 → 员工对象（独立导出，测试可复用；字段映射与升级前完全一致） */
+export function mapEmployeeRows(rows: Record<string, unknown>[]): Employee[] {
+  return rows.map((row, index) => ({
+    id: `emp-${index}-${Date.now()}`,
+    name: cellString(row['姓名']),
+    employeeId: cellString(row['工号']),
+    level: cellString(row['职级']) || 'NA',
+    title: cellString(row['岗位'] ?? row['职位']) || 'NA',
+    dept1: cellString(row['一级部门']),
+    dept2: cellString(row['二级部门']),
+    dept3: cellString(row['三级部门']),
+    dept4: cellString(row['四级部门']),
+    dept5: cellString(row['五级部门']),
+    dept6: cellString(row['六级部门']),
+  }));
 }
 
-export function parseOrgTemplateExcel(file: File): Promise<OrgTemplate[]> {
-  return readFirstSheet(file).then((json) =>
-    json.map((row) => ({
-      dept1: cellString(row['一级部门']),
-      dept2: cellString(row['二级部门']),
-      dept3: cellString(row['三级部门']),
-      dept4: cellString(row['四级部门']),
-      dept5: cellString(row['五级部门']),
-      dept6: cellString(row['六级部门']),
-      deptLevel: cellString(row['部门级别']),
-      leaderId: cellString(row['部门负责人工号']),
-      leaderName: cellString(row['部门负责人']),
-    })),
-  );
+/** 组织模板行 → OrgTemplate 对象（独立导出，测试可复用） */
+export function mapOrgTemplateRows(rows: Record<string, unknown>[]): OrgTemplate[] {
+  return rows.map((row) => ({
+    dept1: cellString(row['一级部门']),
+    dept2: cellString(row['二级部门']),
+    dept3: cellString(row['三级部门']),
+    dept4: cellString(row['四级部门']),
+    dept5: cellString(row['五级部门']),
+    dept6: cellString(row['六级部门']),
+    deptLevel: cellString(row['部门级别']),
+    leaderId: cellString(row['部门负责人工号']),
+    leaderName: cellString(row['部门负责人']),
+  }));
+}
+
+// ───────────────────────── 导入入口 ─────────────────────────
+
+export async function parseEmployeeExcel(file: File): Promise<Employee[]> {
+  const rows = await readAndValidateFile(file, REQUIRED_EMPLOYEE_COLUMNS);
+  return mapEmployeeRows(rows);
+}
+
+export async function parseOrgTemplateExcel(file: File): Promise<OrgTemplate[]> {
+  const rows = await readAndValidateFile(file, REQUIRED_ORG_COLUMNS);
+  return mapOrgTemplateRows(rows);
 }
 
 export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemplate[]): Department[] {

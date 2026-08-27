@@ -13,6 +13,13 @@ import {
   setHealthThresholds,
   resetHealthThresholds,
   DEFAULT_HEALTH_THRESHOLDS,
+  isHeadcountUnset,
+  OrganizationStage,
+  STAGE_PRESETS,
+  getStagePresetThresholds,
+  setStagePreset,
+  DEFAULT_STAGE,
+  metricCaliberNote,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
@@ -50,6 +57,47 @@ function StatusDot({ status, label }: { status: HealthStatus; label?: string }) 
     <span className={`inline-flex items-center gap-1 ${s.text}`}>
       <span className={`w-2 h-2 rounded-full ${s.dot}`} />
       <span className="text-xs">{label ?? HEALTH_STATUS_LABEL[status]}</span>
+    </span>
+  );
+}
+
+/**
+ * 部门健康状态点：未配置编制 → 中性灰「无数据」+ 原因（不把缺失伪装成健康/异常结论），
+ * 否则按健康状态渲染。超编 / 空岗各自保留独立信号，不合并成中性。
+ */
+function DeptStatusDot({ status, headcount }: { status: HealthStatus; headcount: number | null }) {
+  if (isHeadcountUnset(headcount)) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-slate-400"
+        title="未配置编制，无法判断空岗/超编"
+      >
+        <span className="w-2 h-2 rounded-full bg-slate-300" />
+        <span className="text-xs">无数据</span>
+      </span>
+    );
+  }
+  return <StatusDot status={status} />;
+}
+
+/** 指标口径「?」说明：点击展开口径文案（怎么算的、含/不含哪些、不等于什么）。 */
+function CaliberNote({ note }: { note: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex items-center">
+      <button
+        type="button"
+        aria-label="指标口径说明"
+        onClick={() => setOpen((o) => !o)}
+        className="w-4 h-4 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-500 grid place-items-center text-[10px] font-bold leading-none"
+      >
+        ?
+      </button>
+      {open && (
+        <span className="absolute right-0 top-5 z-20 w-64 rounded-lg bg-white/95 backdrop-blur border border-slate-200 shadow-lg p-2.5 text-[11px] text-slate-600 leading-snug">
+          {note}
+        </span>
+      )}
     </span>
   );
 }
@@ -142,6 +190,7 @@ export function HealthDrawer({
   const configs = useLevelConfigs();
   const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
   const [thresholdsOpen, setThresholdsOpen] = useState(false);
+  const [stage, setStage] = useState<OrganizationStage>(DEFAULT_STAGE);
   const report = useMemo(
     () => computeHealthReport(departments, configs, focusDeptId, thresholds),
     [departments, configs, focusDeptId, thresholds],
@@ -165,6 +214,17 @@ export function HealthDrawer({
     const defs = { ...DEFAULT_HEALTH_THRESHOLDS };
     setThresholds(defs);
     resetHealthThresholds();
+    setStage(DEFAULT_STAGE);
+    setStagePreset(DEFAULT_STAGE);
+  };
+
+  /** 切换企业阶段：应用该阶段阈值预设并持久化；仍可在下方阈值面板二次微调。 */
+  const handleSetStage = (s: OrganizationStage) => {
+    setStage(s);
+    setStagePreset(s);
+    const preset = getStagePresetThresholds(s);
+    setThresholds({ ...preset });
+    setHealthThresholds({ ...preset });
   };
 
   const focusedName = focusDeptId
@@ -225,6 +285,39 @@ export function HealthDrawer({
             )}
           </div>
 
+          {/* 企业阶段基准预设 */}
+          <section>
+            <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-slate-600">企业阶段基准</span>
+                <span className="text-[10px] text-slate-400">仅供校准，非行业规范</span>
+              </div>
+              <div className="flex gap-1.5">
+                {(Object.keys(STAGE_PRESETS) as OrganizationStage[]).map((s) => {
+                  const p = STAGE_PRESETS[s];
+                  const active = s === stage;
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => handleSetStage(s)}
+                      aria-pressed={active}
+                      className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        active
+                          ? 'bg-indigo-500 text-white border-indigo-500'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2 leading-snug">
+                {STAGE_PRESETS[stage].description} · 基准仅供参考，需结合本企业业务阶段校准。
+              </p>
+            </div>
+          </section>
+
           {/* L1 部门概览 */}
           <section>
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
@@ -241,13 +334,13 @@ export function HealthDrawer({
                 >
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-bold text-slate-800">{d.name}</span>
-                    <StatusDot status={d.status} />
+                    <DeptStatusDot status={d.status} headcount={d.headcount} />
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold text-slate-900">{d.actual}</span>
                     <span className="text-xs text-slate-500">人</span>
                     <span className="text-xs text-slate-500 ml-auto">
-                      编制 {d.headcount === null ? '—' : d.headcount}
+                      编制 {isHeadcountUnset(d.headcount) ? '未配置' : d.headcount}
                     </span>
                   </div>
                   <div className="mt-3">
@@ -288,7 +381,10 @@ export function HealthDrawer({
                   className={`rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{m.label}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-xs text-slate-500">{m.label}</span>
+                      <CaliberNote note={metricCaliberNote(m.key)} />
+                    </span>
                     <StatusDot status={m.status} />
                   </div>
                   <div className={`mt-1 text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>
@@ -396,7 +492,7 @@ export function HealthDrawer({
                             {r.level > 1 && '└ '}
                             {r.name}
                           </span>
-                          <StatusDot status={r.status} />
+                          <DeptStatusDot status={r.status} headcount={r.headcount} />
                         </div>
                       </td>
                       <td className="px-2 py-2.5 text-right">
@@ -414,7 +510,11 @@ export function HealthDrawer({
                       </td>
                       <td className="px-2 py-2.5 text-right text-slate-700">{r.actual}</td>
                       <td className="px-2 py-2.5 text-right">
-                        {r.gap === null ? (
+                        {isHeadcountUnset(r.headcount) ? (
+                          <span className="text-slate-400" title="未配置编制，无法判断空岗/超编">
+                            未配置
+                          </span>
+                        ) : r.gap === null ? (
                           <span className="text-slate-400">—</span>
                         ) : (
                           <span className={r.gap > 0 ? 'text-amber-600' : r.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
@@ -462,7 +562,7 @@ export function HealthDrawer({
                       <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
                         <span>{r.name}</span>
                         <span>
-                          编制 {r.headcount ?? '—'} · 实际 {r.actual}
+                          编制 {isHeadcountUnset(r.headcount) ? '未配置' : r.headcount} · 实际 {r.actual}
                         </span>
                       </div>
                       <div className="flex h-2 rounded-full overflow-hidden gap-0.5 bg-slate-100">
@@ -471,7 +571,7 @@ export function HealthDrawer({
                           style={{ width: `${((r.headcount ?? 0) / max) * 100}%` }}
                         />
                         <div
-                          className={`h-full ${STATUS_STYLE[r.status].dot}`}
+                          className={`h-full ${isHeadcountUnset(r.headcount) ? 'bg-slate-300' : STATUS_STYLE[r.status].dot}`}
                           style={{ width: `${(r.actual / max) * 100}%` }}
                         />
                       </div>

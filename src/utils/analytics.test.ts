@@ -18,6 +18,13 @@ import {
   resetHealthThresholds,
   HealthThresholds,
   L2Metric,
+  STAGE_PRESETS,
+  DEFAULT_STAGE,
+  getStagePresetThresholds,
+  setStagePreset,
+  METRIC_CALIBER_NOTES,
+  metricCaliberNote,
+  isHeadcountUnset,
 } from './analytics';
 import { Employee, Department, LevelConfig } from '../types';
 
@@ -760,5 +767,165 @@ describe('v2.0.5 未入架构员工 & 员工职级差距', () => {
     const root = dept('d1', '技术部', 1, { employees: [real, virtual], children: [] });
     // 未挂载真实员工才算未入架构；虚拟兼岗不算
     expect(computeUnassignedEmployees([real, virtual, emp('r2', 'L2.1')], [root]).map((e) => e.id)).toEqual(['r2']);
+  });
+});
+
+// —— —— v2.0.8：窗口期后由 HR 诊断逻辑收口所补 —— ——
+
+describe('v2.0.8 空岗率口径对齐', () => {
+  it('部分部门未配置编制 → 空岗率分母只算已配置部门', () => {
+    // 已配置编制部门：编制 10、实际 6（直属）→ 空岗 40%；
+    // 未配置编制部门：4 名员工，不计入分母（旧口径会把它算进分母→ 压低估为 0%）。
+    const configured = dept('cfg', '已配置', 1, {
+      headcount: 10,
+      employees: Array.from({ length: 6 }, (_, i) => emp(`c${i}`, 'L1.1')),
+    });
+    const unconfigured = dept('uncfg', '未配置', 1, {
+      employees: Array.from({ length: 4 }, (_, i) => emp(`u${i}`, 'L1.1')),
+    });
+    const l2 = computeL2([configured, unconfigured]);
+    const vac = l2.find((x) => x.key === 'vacancy')!;
+    // 分母 = 已配置部门实际 6（不含未配置编制部门的 4 人）→ (10-6)/10 = 40%
+    expect(vac.value).toBeCloseTo(40, 0);
+    expect(vac.status).toBe('danger');
+  });
+
+  it('已配置部门的子树员工计入分母（编制覆盖整棵子树）', () => {
+    const child = dept('sub', '子组', 2, { employees: Array.from({ length: 3 }, (_, i) => emp(`s${i}`, 'L1.1')) });
+    const root = dept('root', '已配置', 1, { headcount: 10, employees: [emp('r0', 'L1.1')], children: [child] });
+    const l2 = computeL2([root]);
+    const vac = l2.find((x) => x.key === 'vacancy')!;
+    // 实际 = 直属 1 + 子部门 3 = 4 → (10-4)/10 = 60%
+    expect(vac.value).toBeCloseTo(60, 0);
+    expect(vac.status).toBe('danger');
+  });
+
+  it('父子均配置编制 → 员工不重复计入分母', () => {
+    const child = dept('sub', '子组', 2, { headcount: 3, employees: [emp('s0', 'L1.1'), emp('s1', 'L1.1')] });
+    const root = dept('root', '父', 1, { headcount: 5, children: [child] });
+    const l2 = computeL2([root]);
+    const vac = l2.find((x) => x.key === 'vacancy')!;
+    // 总编制 5+3=8，实际只计子部门 2 人 → (8-2)/8 = 75%
+    expect(vac.value).toBeCloseTo(75, 0);
+    expect(vac.status).toBe('danger');
+  });
+
+  it('全部未配置编制 → 空岗率 null + 关注', () => {
+    const root = dept('t', 'T', 1, { employees: [emp('a', 'L1.1'), emp('b', 'L1.1')] });
+    const l2 = computeL2([root]);
+    const vac = l2.find((x) => x.key === 'vacancy')!;
+    expect(vac.value).toBeNull();
+    expect(vac.status).toBe('warn');
+    expect(vac.verdict).toContain('未配置编制');
+  });
+});
+
+describe('v2.0.8 企业阶段预设 STAGE_PRESETS', () => {
+  it('三档存在且 growth == 当前默认', () => {
+    expect(Object.keys(STAGE_PRESETS).sort()).toEqual(['growth', 'mature', 'startup']);
+    expect(STAGE_PRESETS.startup.id).toBe('startup');
+    expect(STAGE_PRESETS.growth.id).toBe('growth');
+    expect(STAGE_PRESETS.mature.id).toBe('mature');
+    // growth 即当前默认口径
+    expect(STAGE_PRESETS.growth.thresholds).toEqual(DEFAULT_HEALTH_THRESHOLDS);
+    expect(DEFAULT_STAGE).toBe('growth');
+  });
+
+  it('各档阈值结构完整、description 注明仅供参考', () => {
+    for (const stage of ['startup', 'growth', 'mature'] as const) {
+      const t = STAGE_PRESETS[stage].thresholds;
+      expect(t.spanHealthyMin).toBeLessThanOrEqual(t.spanHealthyMax);
+      expect(t.spanWarnLow).toBeLessThanOrEqual(t.spanHealthyMin);
+      expect(t.spanWarnMax).toBeGreaterThanOrEqual(t.spanHealthyMax);
+      expect(t.depthHealthyMax).toBeLessThanOrEqual(t.depthWarnMax);
+      expect(t.managerHealthyMax).toBeLessThanOrEqual(t.managerWarnMax);
+      expect(t.vacancyHealthyMax).toBeLessThanOrEqual(t.vacancyWarnMax);
+      expect(t.overWarnRatio).toBeGreaterThan(0);
+      expect(STAGE_PRESETS[stage].label).toBeTruthy();
+      expect(STAGE_PRESETS[stage].description).toContain('仅供参考');
+    }
+  });
+
+  it('初创/成熟档取值符合 HR 审计档位', () => {
+    const s = STAGE_PRESETS.startup.thresholds;
+    expect(s.spanHealthyMin).toBe(2);
+    expect(s.spanHealthyMax).toBe(7);
+    expect(s.spanWarnMax).toBe(10);
+    const m = STAGE_PRESETS.mature.thresholds;
+    expect(m.spanHealthyMin).toBe(5);
+    expect(m.spanHealthyMax).toBe(9);
+    expect(m.spanWarnMax).toBe(14);
+    expect(m.overWarnRatio).toBe(0.15);
+  });
+});
+
+describe('v2.0.8 setStagePreset / getStagePresetThresholds 持久化', () => {
+  const storage = new Map<string, string>();
+
+  beforeEach(() => {
+    storage.clear();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => storage.set(k, v),
+      removeItem: (k: string) => storage.delete(k),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('getStagePresetThresholds 返回该档副本，修改不影响原始预设', () => {
+    const t = getStagePresetThresholds('startup');
+    expect(t).toEqual(STAGE_PRESETS.startup.thresholds);
+    t.spanHealthyMin = 999;
+    expect(STAGE_PRESETS.startup.thresholds.spanHealthyMin).not.toBe(999);
+  });
+
+  it('setStagePreset 应用自定义阈值并持久化（getHealthThresholds 读取生效）', () => {
+    setStagePreset('mature');
+    expect(storage.get('org-designer.health-thresholds')).toBeTruthy();
+    expect(getHealthThresholds()).toEqual(STAGE_PRESETS.mature.thresholds);
+    expect(getHealthThresholds().spanHealthyMax).toBe(9);
+    expect(getHealthThresholds().depthHealthyMax).toBe(5);
+    expect(getHealthThresholds().overWarnRatio).toBe(0.15);
+  });
+
+  it('setStagePreset(growth) 恢复为当前默认阈值', () => {
+    setStagePreset('startup');
+    setStagePreset('growth');
+    expect(getHealthThresholds()).toEqual(DEFAULT_HEALTH_THRESHOLDS);
+  });
+});
+
+describe('v2.0.8 诊断口径说明 METRIC_CALIBER_NOTES', () => {
+  it('四个指标 key 均非空且 metricCaliberNote 一致', () => {
+    const keys: Array<L2Metric['key']> = ['span', 'depth', 'managerRatio', 'vacancy'];
+    for (const k of keys) {
+      expect(METRIC_CALIBER_NOTES[k]).toBeTruthy();
+      expect(METRIC_CALIBER_NOTES[k].length).toBeGreaterThan(10);
+      expect(metricCaliberNote(k)).toBe(METRIC_CALIBER_NOTES[k]);
+    }
+  });
+
+  it('口径说明包含关键限定语义', () => {
+    expect(METRIC_CALIBER_NOTES.span).toContain('平均');
+    expect(METRIC_CALIBER_NOTES.span).toContain('有负责人');
+    expect(METRIC_CALIBER_NOTES.depth).toContain('最大层数');
+    expect(METRIC_CALIBER_NOTES.managerRatio).toContain('员工总数');
+    expect(METRIC_CALIBER_NOTES.vacancy).toContain('有效编制');
+  });
+});
+
+describe('v2.0.8 isHeadcountUnset', () => {
+  it('null/undefined → true', () => {
+    expect(isHeadcountUnset(null)).toBe(true);
+    expect(isHeadcountUnset(undefined)).toBe(true);
+  });
+
+  it('有效数值 → false（含 0 与超编边界）', () => {
+    expect(isHeadcountUnset(0)).toBe(false);
+    expect(isHeadcountUnset(3)).toBe(false);
+    expect(isHeadcountUnset(-1)).toBe(false);
   });
 });

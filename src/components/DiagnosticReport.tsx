@@ -6,6 +6,7 @@ import {
   collectAllSuggestions,
   HEALTH_STATUS_LABEL,
   SuggestionSeverity,
+  METRIC_CALIBER_NOTES,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 
@@ -241,6 +242,22 @@ export function DiagnosticReport({
             ))}
           </div>
           <p className="text-sm text-slate-700 mt-3">{summary.diagnosis}</p>
+        </section>
+
+        {/* 指标口径与边界（报告可解释性） */}
+        <section>
+          <h2 className="text-base font-bold text-slate-900 mb-3">指标口径与边界</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {report.l2.map((m) => (
+              <div key={m.key} className="rounded-2xl border border-slate-100 shadow-soft p-4">
+                <div className="text-xs font-semibold text-slate-600 mb-1">{m.label}</div>
+                <div className="text-xs leading-snug text-slate-500">{METRIC_CALIBER_NOTES[m.key]}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-400 mt-2 leading-snug">
+            指标用于发现值得讨论的结构性信号，不替代业务背景、人才判断与管理责任。阈值可在健康度面板中按企业阶段与口径调整。
+          </p>
         </section>
 
         {/* 组织架构图（只读） */}

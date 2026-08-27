@@ -23,6 +23,7 @@ import {
   exportToExcel,
   generateSampleEmployeeTemplate,
   generateSampleOrgTemplate,
+  getImportErrorMessage,
 } from './utils/excel';
 import { saveTextFile, saveFile } from './utils/tauri';
 import { useOrgWorkspace } from './utils/useOrgWorkspace';
@@ -194,7 +195,7 @@ export default function App() {
       }
     } catch (error) {
       console.error('解析员工文件失败:', error);
-      showToast('解析员工文件失败，请检查格式');
+      showToast(getImportErrorMessage(error));
     }
   }, [setBoth, showToast]);
 
@@ -208,7 +209,7 @@ export default function App() {
       showToast(`已导入组织架构（${templates.length} 个部门）`);
     } catch (error) {
       console.error('解析组织架构文件失败:', error);
-      showToast('解析组织架构文件失败，请检查格式');
+      showToast(getImportErrorMessage(error));
     }
   }, [setDepartments, setOrgTemplates, showToast]);
 
