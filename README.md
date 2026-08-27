@@ -122,6 +122,8 @@ OrgCompass 当前使用透明、可配置的规则口径，不使用不可解释
 
 Web 版目前提供源码运行与自行部署，不代表已有公开在线服务。
 
+> 前置要求：**Node `^20.19.0` 或 `>=22.12.0`**（Vite 8 的最低要求）。
+
 ```bash
 git clone https://github.com/MaxHou-infinity/orgcompass.git
 cd orgcompass
@@ -197,7 +199,7 @@ OrgCompass 采用本地优先设计：
 
 ## 技术与质量
 
-React 18 · TypeScript strict · Vite 6 · Tailwind CSS · dnd-kit · Tauri 2 · Rust · xlsx · html2canvas · Vitest
+React 18 · TypeScript strict · Vite 8 · Tailwind CSS 4 · dnd-kit · Tauri 2 · Rust · xlsx · html2canvas · Vitest
 
 ```bash
 npm run lint

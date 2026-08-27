@@ -25,6 +25,12 @@ OrgCompass 会处理组织、岗位、编制和人员信息。这类数据可能
 3. 预期影响与实际影响
 4. 已匿名化的日志或示例数据
 
+## 依赖与供应链安全
+
+- `xlsx`（SheetJS 社区版）通过官方 CDN tarball 锁定修复版（`https://cdn.sheetjs.com/xlsx-0.20.x/xlsx-0.20.x.tgz`），以命中原型污染与正则 DoS 两个已公开高危 CVE。该来源非 npm registry，CI 已用 `npm audit --omit=dev --audit-level=high` 作为门禁。
+- 若目标环境无法访问该 CDN，需评估受控 fork 或替代方案，并在发布说明中披露供应链来源。
+- Dependabot alerts / security updates 保持开启，PR 专用 CI 对运行时依赖高危项做零容忍。
+
 ## 数据最小化
 
 - 不要上传真实姓名、邮箱、工号、薪酬、评价或组织机密。
