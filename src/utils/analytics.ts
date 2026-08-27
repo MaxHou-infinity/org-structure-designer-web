@@ -87,8 +87,8 @@ export interface ReportTotals {
   totalEmployees: number;
   /** 部门总数 */
   totalDepartments: number;
-  /** 编制缺口合计（正=空岗，负=超编） */
-  totalGap: number;
+  /** 编制缺口合计（正=空岗，负=超编）；当无任何部门配置编制时置为 null（未配置，不伪装成“超编/空岗”） */
+  totalGap: number | null;
   /** 月人力成本（实际成本合计） */
   totalCost: number;
   /** 有编制配置的一级部门数 */
@@ -653,7 +653,7 @@ export function computeHealthReport(
       totalHeadcount += row.headcount;
     }
   }
-  const totalGap = totalHeadcount - totalEmployees;
+  const totalGap = configuredHeadcount === 0 ? null : totalHeadcount - totalEmployees;
   const totalCost = round1(l3.reduce((s, r) => s + r.actualCost, 0));
 
   const totals: ReportTotals = {

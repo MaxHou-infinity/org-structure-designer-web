@@ -1,4 +1,5 @@
 import { X, Download, Sparkles, FileSpreadsheet, MousePointerClick, Share2 } from 'lucide-react';
+import { APP_VERSION } from '../version';
 
 interface OnboardingOverlayProps {
   open: boolean;
@@ -49,7 +50,7 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
           </button>
           <div className="flex items-center gap-2 text-white/80 text-xs font-medium uppercase tracking-wider mb-2">
             <Sparkles className="w-4 h-4" />
-            v2.0.3 快速上手
+            v{APP_VERSION} 快速上手
           </div>
           <h2 className="text-2xl font-bold tracking-tight">三步设计您的组织架构</h2>
           <p className="text-sm text-white/80 mt-1.5">导入 · 拖拽 · 导出，几分钟生成专业组织架构图</p>

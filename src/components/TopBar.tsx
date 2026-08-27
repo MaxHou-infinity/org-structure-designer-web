@@ -4,6 +4,7 @@ import { Scenario } from '../types';
 import { SaveState } from '../utils/useOrgWorkspace';
 import { ScenarioSwitcher } from './ScenarioSwitcher';
 import { INDUSTRY_TEMPLATES } from '../utils/industryTemplates';
+import { APP_VERSION } from '../version';
 import { TemplatePreviewModal } from './TemplatePreviewModal';
 
 interface TopBarProps {
@@ -105,7 +106,7 @@ export function TopBar({
           <div className="leading-tight">
             <div className="flex items-center gap-2">
               <span className="text-[15px] font-bold text-slate-900 tracking-tight">组织罗盘</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v2.0.7</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">v{APP_VERSION}</span>
             </div>
             <div className="text-[10px] text-slate-500 tracking-wide">OrgCompass</div>
           </div>

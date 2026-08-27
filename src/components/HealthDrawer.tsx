@@ -536,11 +536,11 @@ export function HealthDrawer({
                   <tr className="bg-slate-50/60">
                     <td className="px-4 py-2.5 font-semibold text-slate-700">合计</td>
                     <td className="px-2 py-2.5 text-right font-semibold text-slate-700">
-                      {fmt(report.totals.totalDepartments > 0 ? report.totals.totalEmployees + report.totals.totalGap : null)}
+                      {report.totals.totalGap === null ? '未配置' : fmt(report.totals.totalDepartments > 0 ? report.totals.totalEmployees + report.totals.totalGap : null)}
                     </td>
                     <td className="px-2 py-2.5 text-right font-semibold text-slate-700">{report.totals.totalEmployees}</td>
                     <td className="px-2 py-2.5 text-right font-semibold text-slate-700">
-                      {report.totals.totalGap > 0 ? `+${report.totals.totalGap}` : report.totals.totalGap}
+                      {report.totals.totalGap === null ? '未配置' : report.totals.totalGap > 0 ? `+${report.totals.totalGap}` : report.totals.totalGap}
                     </td>
                     <td className="px-2 py-2.5 text-right text-slate-500">—</td>
                     <td className="px-2 py-2.5 text-right font-semibold text-slate-700">{fmtCost(report.totals.totalCost)}</td>

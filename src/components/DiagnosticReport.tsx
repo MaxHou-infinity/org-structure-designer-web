@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { ArrowLeft, Printer, Image as ImageIcon } from 'lucide-react';
 import { Department, LevelConfig } from '../types';
+import { APP_VERSION } from '../version';
 import {
   computeHealthReport,
   collectAllSuggestions,
@@ -216,10 +217,10 @@ export function DiagnosticReport({
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">编制缺口</div>
-              <div className={`text-2xl font-bold ${report.totals.totalGap > 0 ? 'text-amber-600' : report.totals.totalGap < 0 ? 'text-red-600' : 'text-slate-900'}`}>
-                {report.totals.totalGap > 0 ? `+${report.totals.totalGap}` : report.totals.totalGap}
+              <div className={`text-2xl font-bold ${report.totals.totalGap == null ? 'text-slate-400' : report.totals.totalGap > 0 ? 'text-amber-600' : report.totals.totalGap < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                {report.totals.totalGap == null ? '未配置' : report.totals.totalGap > 0 ? `+${report.totals.totalGap}` : report.totals.totalGap}
               </div>
-              <div className="text-xs text-slate-400 mt-1">正=空岗 负=超编</div>
+              <div className="text-xs text-slate-400 mt-1">{report.totals.totalGap == null ? '未配置编制，无法计算缺口' : '正=空岗 负=超编'}</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">月人力成本</div>
@@ -342,7 +343,7 @@ export function DiagnosticReport({
         </section>
 
         <footer className="text-xs text-slate-400 text-center pt-4 border-t border-slate-100">
-          由组织罗盘 OrgCompass v2.0.7 生成 · {projectName} · {scenarioName} · {generatedAt}
+          由组织罗盘 OrgCompass v{APP_VERSION} 生成 · {projectName} · {scenarioName} · {generatedAt}
         </footer>
       </div>
     </div>

@@ -233,6 +233,14 @@ describe('computeHealthReport（主入口 + 汇总）', () => {
     expect(report.summary.overall).toBeDefined();
   });
 
+  it('全部部门未配置编制 → totalGap 为 null（显示“未配置”，不伪装成超编/空岗）', () => {
+    const a = dept('a', 'A', 1, { employees: [emp('x', 'L1.1')] });
+    const b = dept('b', 'B', 1, { employees: [emp('y', 'L1.1'), emp('z', 'L2.1')] });
+    const report = computeHealthReport([a, b], COSTS);
+    expect(report.totals.configuredHeadcount).toBe(0);
+    expect(report.totals.totalGap).toBeNull();
+  });
+
   it('聚焦单个 L1 → scope 只算该子树', () => {
     const a = dept('a', 'A', 1, { children: [dept('a1', 'A1', 2, { employees: [emp('x', 'L1.1')] })], headcount: 3 });
     const b = dept('b', 'B', 1, { employees: [emp('y', 'L1.1')], headcount: 1 });
@@ -448,7 +456,8 @@ describe('computeHealthReport 边界', () => {
     expect(report.l3).toEqual([]);
     expect(report.totals.totalEmployees).toBe(0);
     expect(report.totals.totalDepartments).toBe(0);
-    expect(report.totals.totalGap).toBe(0);
+    // 空树无任何配置编制 → totalGap 为 null（未配置），而非 0
+    expect(report.totals.totalGap).toBeNull();
     expect(report.totals.totalCost).toBe(0);
     expect(report.totals.configuredHeadcount).toBe(0);
   });
