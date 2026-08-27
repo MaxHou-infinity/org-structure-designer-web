@@ -1,9 +1,23 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 * {
   box-sizing: border-box;
+}
+
+/* 自定义入场动画（原 tailwind.config.js theme.extend.animation，迁为纯 CSS 以便 v4 兼容） */
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideInUp {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.animate-slideInRight {
+  animation: slideInRight 0.24s ease-out;
+}
+.animate-slideInUp {
+  animation: slideInUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 :root {
