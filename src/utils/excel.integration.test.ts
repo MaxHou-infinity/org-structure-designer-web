@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import * as XLSX from 'xlsx';
 import { buildDepartmentTree } from './excel';
 import type { Employee, OrgTemplate, Department } from '../types';
@@ -45,7 +46,10 @@ function rowsToOrgTemplates(rows: Record<string, unknown>[]): OrgTemplate[] {
 }
 
 function readRows(file: string): Record<string, unknown>[] {
-  const wb = XLSX.readFile(file);
+  // 与 App 的 parse*Excel 一致：用 fs 读文件 → Uint8Array → XLSX.read({type:'array'})。
+  // （xlsx 0.20.3 在 Node ESM 下 readFile 的 fs 绑定不可用，改用与解析入口一致的 buffer 路径。）
+  const data = new Uint8Array(readFileSync(file));
+  const wb = XLSX.read(data, { type: 'array' });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 }
