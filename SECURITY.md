@@ -31,6 +31,13 @@ OrgCompass 会处理组织、岗位、编制和人员信息。这类数据可能
 - 若目标环境无法访问该 CDN，需评估受控 fork 或替代方案，并在发布说明中披露供应链来源。
 - Dependabot alerts / security updates 保持开启，PR 专用 CI 对运行时依赖高危项做零容忍。
 
+### 已知并登记的依赖告警（暂缓处理，非隐藏）
+
+- **`glib`（Rust，`src-tauri/Cargo.lock`，中危）** — “glib::VariantStrIter 的 `Iterator`/`DoubleEndedIterator` 实现存在 Unsoundness”。
+  - **为何暂缓**：`glib` 属于 **Linux / GObject 依赖链**（经 Tauri 的 gtk / webkit2gtk），而本项目发布目标为 **macOS(Apple Silicon) + Windows**，这两端 Tauri 使用原生 WKWebView / WebView2，**不链接 glib**，故该告警不影响已发布安装包；且为**中危 + 极窄使用面**的缺陷。
+  - **处置**：登记为已知项，待未来做 Rust 依赖整体升级或重新引入 Linux 目标时，用一次受控的 `cargo update` 将 `glib` 提升到 ≥0.20.0 一并解决。
+  - **结论**：该风险当前不构成 v2.0.8 发布阻塞，登记不掩盖。
+
 ## 数据最小化
 
 - 不要上传真实姓名、邮箱、工号、薪酬、评价或组织机密。
