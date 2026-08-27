@@ -183,6 +183,14 @@ OrgCompass 采用本地优先设计：
 - 评分依据、差距与结论的可追溯设计
 - 权限、隐私、评价偏差与人工复核机制
 
+### v2.0.8 工程重点
+
+下一版本会先处理依赖安全与发布稳定性，再继续扩展产品能力。详细的验收条件与问题记录见 [v2.0.8 开发路线图](docs/v208-roadmap.md)。
+
+- P0：处理 `xlsx` 运行时高危依赖，或形成明确的风险例外
+- P1：完成 Tailwind 4 迁移评估，解决当前 PostCSS 构建阻塞
+- P1：完成 Vite 8 / React 插件 6 的 macOS 与 Windows Tauri 打包验证
+
 欢迎通过 [Issues](https://github.com/MaxHou-infinity/orgcompass/issues/new/choose) 提交场景、问题和建议。
 
 ---
