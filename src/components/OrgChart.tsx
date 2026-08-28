@@ -78,7 +78,6 @@ export function calculateTreeLayout(
   const cardWidth = 220 * (zoom / 100);
   const horizontalGap = 80 * (zoom / 100); // 全局统一水平间距（跨层级一致）
   const verticalGap = 40 * (zoom / 100);
-  const levelStep = 200 * (zoom / 100) + verticalGap; // 固定垂直步进（200 卡高 + 40 间距）
 
   // 一个部门子树占用的水平宽度带（像素）
   const bandWidth = (dept: Department): number => {
@@ -97,7 +96,9 @@ export function calculateTreeLayout(
       let children: TreeNode[] = [];
       if (isExpandedParent) {
         // 子部门占用父部门的整个宽度带，从带的左缘开始排布 → 父卡片中心恰好落在子部门块中点
-        children = layoutRow(dept.children, cursor, y + levelStep);
+        // 垂直步进按父部门「实际估算高度」计算（v2.0.10 修复：父卡随成员数变高时子卡整体下移，不被遮挡）
+        const step = estimateCardHeight(dept) * (zoom / 100) + verticalGap;
+        children = layoutRow(dept.children, cursor, y + step);
       }
 
       const cardCenterX = cursor + band / 2;
@@ -120,6 +121,41 @@ export function calculateTreeLayout(
 }
 
 /**
+ * 卡片高度估算（v2.0.10）：部门卡高度随成员数动态变化，
+ * header + 负责人行 + 成员列表（max-h-40 = 160px 滚动上限）。
+ * 布局（层间步进）与引导线（父卡底缘）都必须用「每个节点自己的高度」，
+ * 否则父卡变高会向下遮挡子部门卡（用户反馈 v2.0.9 回归）。
+ * 常量校准自 src/components/DepartmentCard.tsx 的实际类名与行高；
+ * 修改卡片 CSS 时须同步更新（含 SAFETY 余量，宁可间距略大不可遮挡）。
+ */
+const CARD_HEADER_H = 48; // 头部 px-4 py-3（12*2 + 内容 24）
+const CARD_LEADER_H = 38; // 负责人 px-3 py-2（8*2 + 内容 20 + border 1 + 余量）
+const CARD_MEMBERS_PAD = 16; // 成员区 px-3 py-2（8*2）
+const CARD_MEMBERS_LABEL_H = 24; // 「成员 (N)」text-xs 16 + mb-2 8
+const CARD_EMPTY_LIST_H = 34; // 空态「拖拽员工到这里」py-2 16 + 文本 16 + 余量
+const CARD_EMP_ROW_H = 46; // employee-tag py-1 8 + 姓名行 18 + gap-0.5 2 + 职级行 18
+const CARD_EMP_GAP = 4; // space-y-1
+const CARD_MEMBERS_MAX_H = 160; // max-h-40（超过则滚动，不再增长）
+const CARD_HEIGHT_SAFETY = 4; // 吸收字体/行高渲染差异
+
+/** 估算某部门卡片的实际高度（100% 缩放基准；含成员列表滚动上限）。 */
+export function estimateCardHeight(dept: Department): number {
+  const n = dept.employees.length;
+  const listH =
+    n === 0
+      ? CARD_EMPTY_LIST_H
+      : Math.min(n * CARD_EMP_ROW_H + (n - 1) * CARD_EMP_GAP, CARD_MEMBERS_MAX_H);
+  return (
+    CARD_HEADER_H +
+    CARD_LEADER_H +
+    CARD_MEMBERS_PAD +
+    CARD_MEMBERS_LABEL_H +
+    listH +
+    CARD_HEIGHT_SAFETY
+  );
+}
+
+/**
  * 生成父→子连接线（引导线）的 SVG 路径。
  * 经典组织树走线：父卡底部中点 → 垂直降到水平总线 → 水平延伸到每个子卡中点 → 垂直降到子卡顶部。
  * 坐标为 100% 缩放基准（与卡片坐标一致），实际缩放由外层 transform:scale 完成。
@@ -127,14 +163,13 @@ export function calculateTreeLayout(
 function computeConnectors(
   nodes: TreeNode[],
   cardWidth: number,
-  cardHeight: number,
 ): string[] {
   const paths: string[] = [];
   const walk = (list: TreeNode[]) => {
     for (const n of list) {
       if (n.children.length > 0) {
         const parentCx = n.x + cardWidth / 2;
-        const parentBottom = n.y + cardHeight;
+        const parentBottom = n.y + estimateCardHeight(n.department);
         const firstChild = n.children[0];
         const lastChild = n.children[n.children.length - 1];
         const busY = parentBottom + (firstChild.y - parentBottom) / 2; // 父底与子顶的中点
@@ -159,9 +194,8 @@ function computeConnectors(
   return paths;
 }
 
-/** 卡片基础尺寸（与 calculateTreeLayout 的 200px 层级步进一致） */
+/** 卡片基础尺寸（卡片宽度；高度按 estimateCardHeight 逐节点动态计算） */
 const CARD_WIDTH = 220;
-const CARD_HEIGHT = 200;
 
 /**
  * 绝对定位渲染组织树（方案 A）：所有部门卡片平铺在 canvasRef 直接子级，
@@ -228,17 +262,17 @@ const renderTreeRecursive = (
   );
 };
 
-/** 计算布局总高度：所有节点的最大 y + 卡片高度（缩放前基准） */
+/** 计算布局总高度：所有节点的最大底缘（y + 该节点估算高度） */
 function computeLayoutHeight(nodes: TreeNode[]): number {
-  let maxY = 0;
+  let maxBottom = 0;
   const walk = (list: TreeNode[]) => {
     for (const n of list) {
-      maxY = Math.max(maxY, n.y);
+      maxBottom = Math.max(maxBottom, n.y + estimateCardHeight(n.department));
       walk(n.children);
     }
   };
   walk(nodes);
-  return maxY + CARD_HEIGHT;
+  return maxBottom;
 }
 
 /** 空状态 Hero（初次使用引导）：三步引导 + CTA */
@@ -711,7 +745,7 @@ export function OrgChart({
           >
             {/* 引导线层：父→子连接线，绝对定位铺满画布，位于卡片下方（先渲染） */}
             {(() => {
-              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH, CARD_HEIGHT);
+              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH);
               if (connectorPaths.length === 0) return null;
               return (
                 <svg

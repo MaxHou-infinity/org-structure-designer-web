@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateTreeLayout, countLeaves } from './OrgChart';
+import { calculateTreeLayout, countLeaves, estimateCardHeight } from './OrgChart';
 import { buildDepartmentTree } from '../utils/excel';
 import type { Department, Employee } from '../types';
 
@@ -39,12 +39,62 @@ describe('calculateTreeLayout（方案A 绝对定位布局）', () => {
     expect(maxRight).toBeLessThan(5000);
   });
 
-  it('根部门 y=0，子部门 y=240（层级步进正确）', () => {
+  it('根部门 y=0，子部门 y=父卡估算高度+40（层级步进按卡高动态计算，v2.0.10）', () => {
     const nodes = calculateTreeLayout(treeOf(), 0, 0, 100);
     for (const n of nodes) {
       expect(n.y).toBe(0);
-      for (const c of n.children) expect(c.y).toBe(240);
+      for (const c of n.children) {
+        expect(c.y).toBe(estimateCardHeight(n.department) + 40);
+      }
     }
+  });
+
+  it('上级卡高增长 → 子部门整体下移且不被遮挡（回归 v2.0.9 遮挡 bug）', () => {
+    // 上级部门直挂 6 名员工（成员列表触发 max-h-40 滚动上限，卡高 ≈ 286）
+    const emps: Employee[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `e${i}`,
+      name: `员工${i}`,
+      employeeId: `E${i}`,
+      level: 'L1.1',
+    }));
+    const child: Department = {
+      id: 'child',
+      name: '子部门',
+      level: 2,
+      parentId: 'parent',
+      children: [],
+      employees: [],
+      expanded: true,
+      headcount: undefined,
+    };
+    const parent: Department = {
+      id: 'parent',
+      name: '上级部门',
+      level: 1,
+      children: [child],
+      employees: emps,
+      expanded: true,
+      headcount: undefined,
+    };
+    const h = estimateCardHeight(parent);
+    expect(h).toBeGreaterThan(200); // 高于旧固定 200 步进假设，正是旧版遮挡根因
+    const nodes = calculateTreeLayout([parent], 0, 0, 100);
+    const p = nodes[0];
+    expect(p.children).toHaveLength(1);
+    const c = p.children[0];
+    expect(c.y).toBe(p.y + h + 40); // 子卡顶 = 父卡底（估算）+ 40 间距
+    expect(c.y).toBeGreaterThan(p.y + h - 1); // 子卡顶不低于父卡估算底缘 → 不重叠
+  });
+
+  it('空部门（0 成员）子部门间距 = 估算高度 + 40（最小卡高不挤压子卡）', () => {
+    const child: Department = {
+      id: 'child2', name: '子', level: 2, parentId: 'p2', children: [], employees: [], expanded: true,
+    };
+    const parent: Department = {
+      id: 'p2', name: '父', level: 1, children: [child], employees: [], expanded: true,
+    };
+    const nodes = calculateTreeLayout([parent], 0, 0, 100);
+    expect(nodes[0].children[0].y).toBe(estimateCardHeight(parent) + 40);
   });
 
   it('叶子数正确（countLeaves），折叠子部门计为 1', () => {
