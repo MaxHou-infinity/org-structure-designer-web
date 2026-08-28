@@ -1,5 +1,10 @@
-import { Department, Employee, LevelConfig } from '../types';
+import { Department, Employee, LevelConfig, Position, LeaderType } from '../types';
 import { fullCode } from './level';
+import { computeMatchStates, MatchResult } from './match';
+
+// —— v2.1.1 状态机接入：data-eng 于 src/utils/match.ts 提供，此处复用/再导出 ——
+export { computeMatchStates };
+export type { MatchResult };
 
 /**
  * 组织健康度分析（纯函数，可单测）。
@@ -82,16 +87,18 @@ export interface DepthBreakdown {
 
 /** 管理者明细（v2.0.9）：内部/外部/兼岗 + 双口径分母 */
 export interface ManagerBreakdown {
-  /** 内部负责人数（去重、剔除外部）—— 主口径分子 */
+  /** 内部负责人数（去重、剔除外部、只计 leaderType==='owner'）—— 主口径分子 */
   internalManagers: number;
-  /** 外部负责人数（不在员工名册内）—— 仅展示，不计分子 */
+  /** 外部/非正职负责人数（不在名册 owner + deputy/acting/external 型负责人）—— 仅展示，不计分子 */
   externalManagers: number;
-  /** 兼岗：同一人兼任 ≥2 个部门的人数（仅展示，去重后分子不变） */
+  /** 兼岗：同一人兼任 ≥2 个部门（其中至少一处为正职）的人数（仅展示，去重后分子不变） */
   multiDeptManagers: number;
   /** 分母：员工总数（含管理者、非虚拟） */
   totalEmployees: number;
   /** 非管理员工数 = totalEmployees - internalManagers（辅助口径用） */
   nonManagerEmployees: number;
+  /** leaderType==='vacant' 的部门数（负责人空缺提示） */
+  vacantLeaderDepts: number;
 }
 
 /** L2 单项指标 */
@@ -381,13 +388,43 @@ function worseStatus(a: HealthStatus, b: HealthStatus): HealthStatus {
   return rank[a] >= rank[b] ? a : b;
 }
 
-/** 子树编制合计（只累加 headcount > 0 的部门；headcount<=0/未配置视为无有效编制 → 返回 null） */
+/**
+ * 统一编制读取入口（v2.1.1）：
+ * 优先聚合本部门直属岗位编制（只计 status==='active' 的岗位；frozen/archived 不计，
+ * 其中 frozen 为「编制冻结」、archived 为软删除，均不产生可填补缺口），
+ * 聚合结果 > 0 才视为「已配置编制」（返回该值）；否则回退读部门级冗余派生 `headcount`（过渡期兼容）。
+ * 无有效编制时返回 null（与旧口径「未配置编制 → 不参与空岗率/缺口」一致）。
+ * 迁移前 v1 数据无 positions → 恒回退 headcount，保证空岗率/缺口/成本与迁移前完全一致。
+ */
+export function deptHeadcount(dept: Department): number | null {
+  if (dept.positions?.length) {
+    // 只累加 status==='active' 且 headcount>0 的岗位（与 v2.0.8「只累加 headcount>0 部门」口径一致；
+    // headcount===0 = 编制未配置/冻结；frozen/archived 不计）。聚合 >0 才视为「已配置有效编制」。
+    const sum = dept.positions.reduce(
+      (s, p) => s + (p.status === 'active' && p.headcount > 0 ? p.headcount : 0),
+      0,
+    );
+    return sum > 0 ? sum : null;
+  }
+  return typeof dept.headcount === 'number' && Number.isFinite(dept.headcount) && dept.headcount > 0
+    ? dept.headcount
+    : null;
+}
+
+/** 部门是否「已配置有效编制」（deptHeadcount !== null）。供空岗率分子/分母覆盖判定用。 */
+function hasEffectiveHeadcount(dept: Department): boolean {
+  return deptHeadcount(dept) !== null;
+}
+
+/** 子树编制合计（只累加「已配置有效编制」的部门；未配置视为无有效编制 → 返回 null）。
+ *  统一经 deptHeadcount 读取，保证 v1→v2 迁移后数字不变。 */
 function sumHeadcountSubtree(dept: Department): number | null {
   let sum = 0;
   let found = false;
   const walk = (d: Department) => {
-    if (typeof d.headcount === 'number' && Number.isFinite(d.headcount) && d.headcount > 0) {
-      sum += d.headcount;
+    const hc = deptHeadcount(d);
+    if (hc !== null) {
+      sum += hc;
       found = true;
     }
     for (const c of d.children) walk(c);
@@ -580,18 +617,20 @@ export function computeDepthBreakdown(roots: Department[]): DepthBreakdown {
 }
 
 /**
- * 管理者明细（v2.0.9）：
+ * 管理者明细（v2.0.9 口径 + v2.1.1 leaderType 精确化）：
  * - 统一去重：负责人解析到名册员工（优先 employeeId、其次姓名），修正「同一人 A 部门用 leaderId、
  *   B 部门用 leaderName」的双计 bug；
- * - 内部判定：负责人能在员工名册（scope 内非虚拟员工）命中 → 内部；否则判外部（挂名/组织外 VP/上级集团），
- *   不计主口径分子、仅展示计数；
- * - 兼岗：同一人兼任 ≥2 部门 → multiDeptManagers 暴露（去重后分子仍算 1，不会虚高）。
- * - 副职/挂名的精确剔除需 v2.1.0 的「负责人类型」字段，本版本仅「尽力而为」并留痕。
+ * - 内部判定（v2.1.1）：主口径分子只计 leaderType==='owner'（缺省视为 'owner' 兼容旧数据）且能命中
+ *   员工名册的负责人；否则判外部，不计分子、仅展示计数；
+ * - 精确剔除（v2.1.1）：leaderType==='deputy'|'acting'|'external' 的负责人仅展示（externalManagers），
+ *   不计主口径分子 —— 解决 v2.0.9「副职/挂名无法精确剔除」遗留问题；
+ * - 空缺（v2.1.1）：leaderType==='vacant' 的部门触发「负责人空缺」提示，不计入内部/外部负责人；
+ * - 兼岗：同一人兼任 ≥2 部门（其中至少一处为正职） → multiDeptManagers 暴露（去重后分子仍算 1）。
  */
 export function computeManagerBreakdown(roots: Department[]): ManagerBreakdown {
   const allDepts = flattenDepartments(roots);
   const emps = collectEmployees(
-    { id: '', name: '', level: 0, expanded: true, children: roots, employees: [] } as Department,
+    { id: '', name: '', level: 0, expanded: true, children: roots, employees: [], positions: [] } as Department,
     false,
   );
 
@@ -618,15 +657,31 @@ export function computeManagerBreakdown(roots: Department[]): ManagerBreakdown {
     return null;
   };
 
-  // 统一 person key：内部 = 名册员工记录（employeeId 优先），外部 = 原 key（id 优先）
+  // 统一 person key：内部 = 名册员工记录（employeeId 优先），外部 = 原 key（id 优先）。
+  // kindByPerson 记录该「人」是否为「正职内部负责人」（主口径分子）。同一人既是某部门正职、又兼任他处
+  // 副职/挂名时，以「正职内部」为准（不会因副职角色被降级为外部）。
   const kindByPerson = new Map<string, 'internal' | 'external'>();
   const deptCountByPerson = new Map<string, number>();
+  let vacantLeaderDepts = 0;
   for (const d of allDepts) {
+    const lt: LeaderType = d.leaderType ?? 'owner';
+    if (lt === 'vacant') {
+      vacantLeaderDepts += 1;
+      continue;
+    }
     if (!d.leaderId && !d.leaderName) continue;
     const empHit = resolveLeader(d);
     const personKey = empHit ? `emp:${empHit.employeeId || empHit.id}` : `ext:${d.leaderId || d.leaderName}`;
-    if (!kindByPerson.has(personKey)) {
-      kindByPerson.set(personKey, empHit ? 'internal' : 'external');
+    if (lt === 'owner') {
+      // 正职：能命中名册 → 内部（分子）；否则外部（仅展示）。
+      if (!kindByPerson.has(personKey)) {
+        kindByPerson.set(personKey, empHit ? 'internal' : 'external');
+      }
+    } else {
+      // deputy / acting / external：仅展示，不计分子（除非该人同时为正职内部，则保持内部）。
+      if (kindByPerson.get(personKey) !== 'internal') {
+        kindByPerson.set(personKey, 'external');
+      }
     }
     deptCountByPerson.set(personKey, (deptCountByPerson.get(personKey) ?? 0) + 1);
   }
@@ -647,6 +702,7 @@ export function computeManagerBreakdown(roots: Department[]): ManagerBreakdown {
     multiDeptManagers,
     totalEmployees: emps.length,
     nonManagerEmployees: Math.max(emps.length - internalManagers, 0),
+    vacantLeaderDepts,
   };
 }
 
@@ -679,7 +735,7 @@ export function depthStatusWithBreakdown(b: DepthBreakdown, t: HealthThresholds)
   return status;
 }
 
-/** v2.0.9 管理者比判读文案（主口径 + 辅助口径 + 外部/兼岗留痕） */
+/** v2.0.9 管理者比判读文案（主口径 + 辅助口径 + 外部/副职/兼岗/空缺留痕） */
 function managerRatioVerdictText(status: HealthStatus, b: ManagerBreakdown): string {
   const base =
     status === 'healthy'
@@ -688,8 +744,9 @@ function managerRatioVerdictText(status: HealthStatus, b: ManagerBreakdown): str
         ? '管理者占比偏高，注意成本/官僚倾向'
         : '管理者占比过高，存在头重脚轻';
   const parts: string[] = [];
-  if (b.externalManagers > 0) parts.push(`外部负责人 ${b.externalManagers} 人已剔除`);
+  if (b.externalManagers > 0) parts.push(`外部/非正职负责人 ${b.externalManagers} 人已剔除`);
   if (b.multiDeptManagers > 0) parts.push(`兼任多部门负责人 ${b.multiDeptManagers} 人已去重`);
+  if (b.vacantLeaderDepts > 0) parts.push(`${b.vacantLeaderDepts} 个部门负责人空缺`);
   const per =
     b.nonManagerEmployees > 0 && b.internalManagers > 0
       ? Math.round(b.nonManagerEmployees / b.internalManagers)
@@ -705,8 +762,9 @@ function managerRatioVerdictText(status: HealthStatus, b: ManagerBreakdown): str
  *   主判中位数 + 极值升级（max > spanWarnMax → 至少关注；≥ ×1.5 → 预警）。
  * - 层级深度 = 部门节点深度分布（根 L1=1）的 P90 主判 + 孤立深链升级 + max 硬上限；
  *   展示 max / P50 / P90 与最深链定位。
- * - 管理者比 = 内部负责人数（去重、剔除外部）÷ 员工总数（含管理者、非虚拟）× 100。
- * - 空岗率 = 空缺职位数 ÷ 编制总数（编制需用户填，未填则跳过 → null）。
+ * - 管理者比 = 内部负责人数（去重、剔除外部、只计 leaderType==='owner'）÷ 员工总数（含管理者、非虚拟）× 100；
+ *   副职/代理/外部挂名不计分子（v2.1.1 leaderType 精确化）。
+ * - 空岗率 = 空缺职位数 ÷ 编制总数（编制经 deptHeadcount 读取；未填则跳过 → null）。
  * 所有阈值为「默认阈值」，可在分析面板标注"可后续调"（阈值结构不变）。
  * @param roots 作用域根部门列表（聚焦单个 L1 时传入 [该部门]）
  */
@@ -760,22 +818,23 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
     managerRatioVerdict = managerRatioVerdictText(managerRatioStatusVal, managerBreakdown);
   }
 
-  // 空岗率（口径对齐 v2.0.8）：分子 = 已配置编制(headcount>0)部门的编制合计；分母 = 同批已配置编制部门子树内的员工数（不含虚拟兼岗）。
+  // 空岗率（口径对齐 v2.0.8 / v2.1.1）：分子 = 已配置编制部门的编制合计；分母 = 同批已配置编制部门子树内的员工数（不含虚拟兼岗）。
+  // 编制统一经 deptHeadcount 读取（优先岗位聚合、回退部门冗余派生），保证 v1→v2 迁移后部门级数字不变。
   // 未配置编制的部门不进分子也不进分母，避免分母虚大压低空岗率。
-  // 覆盖判定：某部门或其任一祖先已配置编制(headcount>0)，则其子树整体计入“已配置”分母（父子同配不重复计）。
+  // 覆盖判定：某部门或其任一祖先已配置有效编制，则其子树整体计入“已配置”分母（父子同配不重复计）。
   let headcount = 0;
   let foundHeadcount = false;
   for (const d of allDepts) {
-    if (typeof d.headcount === 'number' && Number.isFinite(d.headcount) && d.headcount > 0) {
-      headcount += d.headcount;
+    const hc = deptHeadcount(d);
+    if (hc !== null) {
+      headcount += hc;
       foundHeadcount = true;
     }
   }
   let configuredActual = 0;
   const walkConfigured = (list: Department[], covered: boolean) => {
     for (const d of list) {
-      const inCovered =
-        covered || (typeof d.headcount === 'number' && Number.isFinite(d.headcount) && d.headcount > 0);
+      const inCovered = covered || hasEffectiveHeadcount(d);
       if (inCovered) configuredActual += d.employees.filter((e) => !e.isVirtual).length;
       walkConfigured(d.children, inCovered);
     }
@@ -849,7 +908,7 @@ export type DiagnosticMetricKey = L2Metric['key'];
 export const METRIC_CALIBER_NOTES: Record<DiagnosticMetricKey, string> = {
   span: '管理幅度 = 有负责人部门「直管人数」的中位数（直管 = 节点直挂员工 + 下一层有负责人子部门数）。中位数对极端值稳健，均值（仅作参考）不再主导判定；另展示最小/最大与部门级明细，最宽的部门单独标出、单点失衡不会被其它窄部门抹平。未设负责人的部门不参与统计，其缺失另见「负责人无人直管/未配置负责人」提示。',
   depth: '层级深度 = 部门节点深度分布（根 L1=1）的 P90 为主判（代表「大多数部门在第几层」），同时给出 P50 典型深度、最大层数与最深链路的部门定位。最大层数只代表最坏链，不代表大多数部门；孤立深链会触发至少「关注」、超过硬上限触发「预警」。深链（零售/医院/教育）可能正是业务所需，别据此一律压层。',
-  managerRatio: '管理者比 = 内部负责人数（去重、剔除不在员工名册内的外部负责人）÷ 员工总数（含管理者、不含虚拟兼岗）。兼岗/副职/挂名负责人暂无法用现有字段精确剔除，比值可能仍偏高，请结合实际情况解读；另附「非管理者口径」供对照（每 N 名非管理员工配 1 名管理者）。',
+  managerRatio: '管理者比 = 内部负责人数（去重、剔除外部/非正职负责人，只计 leaderType==="owner"）÷ 员工总数（含管理者、不含虚拟兼岗）。副职/代理/外部挂名负责人由 leaderType 精确剔除、不计分子仅展示；负责人空缺的部门会单独提示。另附「非管理者口径」供对照（每 N 名非管理员工配 1 名管理者）。',
   vacancy: '空岗率 =（有效编制 − 实际）÷ 有效编制。只统计配置了编制的部门；编制未填时提示“无数据”而非视为健康。空岗可能是战略储备也可能是冗余，请结合业务确认；编制是否真实填写由 HR 复核。',
 };
 
@@ -907,6 +966,112 @@ export function computeL3(roots: Department[], configs: LevelConfig[], threshold
       status,
     };
   });
+}
+
+/** —— —— v2.1.1 岗位级编制/缺口/成本 —— —— */
+
+/** 岗位级汇总单行（入口：全量岗位列表；assignedCount/gap/gapCost/status 均运行时派生，不进持久化） */
+export interface PositionSummary {
+  positionId: string;
+  departmentId: string;
+  name: string;
+  /** 编制名额（本岗位可容纳人数） */
+  headcount: number;
+  /** 实际套岗人数（非虚拟员工 positionId 匹配本岗位） */
+  assignedCount: number;
+  /** 缺口 = headcount - assignedCount；frozen 或 headcount===0 → null（不计待补缺口） */
+  gap: number | null;
+  /** 岗位在岗平均月成本（套岗员工成本均值；无人 → 0） */
+  avgCost: number;
+  /** 缺口成本 = gap × 目标职级单位成本（levelBand 优先，其次 targetLevel 均值，回退在岗均值） */
+  gapCost: number;
+  /** 缺口分级灯号：空岗按 vacancyStatus / 超编按 overStatus / 满编或 frozen → healthy */
+  status: HealthStatus;
+}
+
+/** 岗位目标职级单位成本（估算每补一个缺口的月成本）：
+ *  1) Position.levelBandMin/levelBandMax → costForLevel（带宽下限优先，代表入门级成本）；
+ *  2) 该岗位套岗员工的 targetLevel → costForLevel 均值；
+ *  3) 回退：该岗位当前在岗平均成本 avgCost（无部门上下文，用岗位级在岗均值近似「部门平均」）。 */
+function positionUnitCost(pos: Position, assigned: Employee[], configs: LevelConfig[]): number {
+  for (const code of [pos.levelBandMin, pos.levelBandMax]) {
+    if (code) {
+      const c = costForLevel(configs, code);
+      if (c > 0) return c;
+    }
+  }
+  const targetCosts = assigned
+    .map((e) => (e.targetLevel ? costForLevel(configs, e.targetLevel) : 0))
+    .filter((c) => c > 0);
+  if (targetCosts.length > 0) {
+    return round1(targetCosts.reduce((s, c) => s + c, 0) / targetCosts.length);
+  }
+  const actualCosts = assigned.map((e) => employeeCost(e, configs)).filter((c) => c > 0);
+  return actualCosts.length > 0 ? round1(actualCosts.reduce((s, c) => s + c, 0) / actualCosts.length) : 0;
+}
+
+/**
+ * 岗位级汇总（v2.1.1）：按每个岗位输出编制/在岗/缺口/成本，供「招聘缺口视图」与 L3 岗位展开消费。
+ * - 只处理 active / frozen 岗位；archived（软删除）过滤；
+ * - assignedCount 只计非虚拟员工（positionId === 本岗位 id），兼岗虚拟副本不计套餐；
+ * - frozen 或 headcount<=0（= 未配置/冻结）→ gap=null（不计待补缺口、不判超编）、status=warn、gapCost=0；
+ * - 其余 gap>0 按 vacancyStatus、gap<0 按 overStatus 分级。
+ * @param positions 全量岗位扁平列表（Scenario.positions）
+ * @param allEmployees 全量员工（非虚拟 + 兼岗虚拟副本；虚拟不计套岗）
+ * @param configs 职级配置（成本映射）
+ * @param thresholds 阈值（缺省当前配置，与其它 compute* 一致）
+ */
+export function computePositionSummary(
+  positions: Position[],
+  allEmployees: Employee[],
+  configs: LevelConfig[],
+  thresholds: HealthThresholds = getHealthThresholds(),
+): PositionSummary[] {
+  const assignedByPos = new Map<string, Employee[]>();
+  for (const e of allEmployees) {
+    if (e.isVirtual || !e.positionId) continue;
+    const list = assignedByPos.get(e.positionId) ?? [];
+    list.push(e);
+    assignedByPos.set(e.positionId, list);
+  }
+
+  const out: PositionSummary[] = [];
+  for (const p of positions) {
+    if (p.status === 'archived') continue;
+    const assigned = assignedByPos.get(p.id) ?? [];
+    const assignedCount = assigned.length;
+    const headcount = p.headcount;
+    const frozen = p.status === 'frozen';
+    // headcount<=0（= 编制未配置/冻结）或 frozen → gap=null：不计缺口、不判超编（即使 assignedCount>headcount）。
+    const gap = frozen || headcount <= 0 ? null : headcount - assignedCount;
+    const avgCost =
+      assigned.length > 0 ? round1(assigned.reduce((s, e) => s + employeeCost(e, configs), 0) / assigned.length) : 0;
+    let gapCost = 0;
+    if (gap !== null && gap > 0) {
+      const unit = positionUnitCost(p, assigned, configs);
+      gapCost = unit > 0 ? round1(gap * unit) : 0;
+    }
+    const status: HealthStatus =
+      gap === null
+        ? 'warn' // headcount<=0 / frozen → 未配置/冻结，不计缺口 → 关注（与部门级未配置编制口径一致）
+        : gap > 0
+          ? vacancyStatus((gap / headcount) * 100, thresholds)
+          : gap < 0
+            ? overStatus(Math.abs(gap) / Math.max(assignedCount, 1), thresholds)
+            : 'healthy'; // gap === 0 → 满编/placed
+    out.push({
+      positionId: p.id,
+      departmentId: p.departmentId,
+      name: p.name,
+      headcount,
+      assignedCount,
+      gap,
+      avgCost,
+      gapCost,
+      status,
+    });
+  }
+  return out;
 }
 
 /** —— 主入口 —— */

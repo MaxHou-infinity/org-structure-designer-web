@@ -5,6 +5,8 @@ import { Department, Employee } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
 import { employeeDeptMap } from '../utils/search';
 import { SearchHighlight, SearchHighlightContext } from './SearchContext';
+import { PositionSummary } from '../utils/analytics';
+import { MatchResult } from '../utils/match';
 
 interface OrgChartProps {
   departments: Department[];
@@ -29,6 +31,16 @@ interface OrgChartProps {
   onLoadIndustryTemplate?: () => void;
   /** 搜索命中高亮（可选） */
   searchHighlight?: SearchHighlight;
+  // —— v2.1.1 岗位化（UI 层消费；数据源为部门树内嵌 positions） ——
+  /** 岗位级汇总（computePositionSummary 输出，供岗位区/套岗展示） */
+  positionSummaries?: PositionSummary[];
+  /** 人岗匹配状态（computeMatchStates 输出，供员工标签状态点） */
+  matchStates?: MatchResult[];
+  onCreatePosition?: (deptId: string, name: string) => void;
+  onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
+  onAssignEmployeeToPosition?: (empId: string, positionId: string) => void;
+  onRemoveAssignment?: (empId: string) => void;
+  onCreateVirtualForPosition?: (deptId: string, positionId: string, empId: string) => void;
 }
 
 interface TreeNode {
@@ -243,6 +255,13 @@ const renderTreeRecursive = (
   onToggleSelectEmp: (empId: string, additive: boolean) => void,
   membersExpandedIds: ReadonlySet<string>,
   onToggleMemberExpanded: (deptId: string) => void,
+  positionSummaries: PositionSummary[],
+  matchStates: MatchResult[],
+  onCreatePosition: (deptId: string, name: string) => void,
+  onSetPositionHeadcount: (deptId: string, positionId: string, headcount: number) => void,
+  onAssignEmployeeToPosition: (empId: string, positionId: string) => void,
+  onRemoveAssignment: (empId: string) => void,
+  onCreateVirtualForPosition: (deptId: string, positionId: string, empId: string) => void,
 ): React.ReactNode => {
   // 扁平化所有节点，全部相对 canvasRef 绝对定位（全局坐标）
   const flat = flattenTreeNodes(nodes);
@@ -272,6 +291,13 @@ const renderTreeRecursive = (
             onToggleSelectEmp={onToggleSelectEmp}
             membersExpanded={membersExpandedIds.has(node.department.id)}
             onToggleMembers={() => onToggleMemberExpanded(node.department.id)}
+            positionSummaries={positionSummaries}
+            matchStates={matchStates}
+            onCreatePosition={onCreatePosition}
+            onSetPositionHeadcount={onSetPositionHeadcount}
+            onAssignEmployeeToPosition={onAssignEmployeeToPosition}
+            onRemoveAssignment={onRemoveAssignment}
+            onCreateVirtualForPosition={onCreateVirtualForPosition}
           />
         </div>
       ))}
@@ -379,6 +405,13 @@ export function OrgChart({
   onLoadTestData,
   onLoadIndustryTemplate,
   searchHighlight,
+  positionSummaries = [],
+  matchStates = [],
+  onCreatePosition,
+  onSetPositionHeadcount,
+  onAssignEmployeeToPosition,
+  onRemoveAssignment,
+  onCreateVirtualForPosition,
 }: OrgChartProps) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [dragData, setDragData] = useState<{ type: 'employee' | 'department'; data: Employee | Department } | null>(null);
@@ -815,7 +848,14 @@ export function OrgChart({
               selectedSet,
               handleToggleSelectEmp,
               memberExpandedIds,
-              toggleMemberExpanded
+              toggleMemberExpanded,
+              positionSummaries,
+              matchStates,
+              onCreatePosition ?? (() => {}),
+              onSetPositionHeadcount ?? (() => {}),
+              onAssignEmployeeToPosition ?? (() => {}),
+              onRemoveAssignment ?? (() => {}),
+              onCreateVirtualForPosition ?? (() => {}),
             )}
           </div>
         ) : (

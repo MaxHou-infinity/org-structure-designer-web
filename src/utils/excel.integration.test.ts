@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as XLSX from 'xlsx';
-import { buildDepartmentTree } from './excel';
+import { buildDepartmentTree, mapEmployeeRows, mapPositionRows, resolveReportsToEmployeeIds } from './excel';
 import type { Employee, OrgTemplate, Department } from '../types';
 
 /**
@@ -120,5 +120,68 @@ describe('真实测试文件集成：员工+组织架构 → 树渲染（P0 bug 
   it('员工文件无有效数据 → 空树（上传提示「员工文件无有效数据」的判定路径）', () => {
     const tree = buildDepartmentTree([], []);
     expect(tree).toEqual([]);
+  });
+});
+
+/**
+ * 端到端：富字段 Excel（员工表内嵌 岗位名称/个人成本/目标职级/直接上级 + 独立岗位表）
+ * → 岗位树（find-or-create / 先建岗）+ 员工套岗 + 岗位级编制正确。
+ * 用 XLSX 生成字节 → sheet_to_json（与 parseExcelFromBuffer 一致）→ 真实 map*Rows → buildDepartmentTree。
+ */
+describe('真实富字段文件集成：员工富字段 + 岗位表 → 岗位树与套岗', () => {
+  function rowsOf(aoa: unknown[][]): Record<string, unknown>[] {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+    const read = XLSX.read(buf, { type: 'array' });
+    return XLSX.utils.sheet_to_json<Record<string, unknown>>(read.Sheets[read.SheetNames[0]]);
+  }
+
+  it('员工富字段 + 岗位表：岗位 find-or-create、套岗、部门级岗位编制正确', () => {
+    const empRows = rowsOf([
+      ['姓名', '工号', '职级', '岗位名称', '个人成本', '目标职级', '直接上级', '一级部门'],
+      ['张三', 'E001', 'L3.2', '前端工程师', '24000', 'L4.1', '', '技术部'],
+      ['李四', 'E002', 'L2.1', '前端工程师', '18000', '', '张三', '技术部'],
+      ['王五', 'E003', 'L4.2', '研发经理', '36000', '', '', '技术部'],
+      ['赵六', 'E004', 'L2.1', '销售专员', '15000', '', '', '销售部'],
+    ]);
+    const posRows = rowsOf([
+      ['一级部门', '岗位名称', '序列', '职级带宽下限', '职级带宽上限', '编制数'],
+      ['技术部', '前端工程师', '技术', 'L1', 'L3.2', '3'],
+      ['技术部', '研发经理', '管理', '', '', '1'],
+    ]);
+
+    const employees = resolveReportsToEmployeeIds(mapEmployeeRows(empRows));
+    expect(employees[2].cost).toBe(36000);
+    expect(employees[0].targetLevel).toBe('L4.1');
+    const positions = mapPositionRows(posRows);
+    const tree = buildDepartmentTree(employees, [], positions);
+
+    const 技术部 = tree.find((d) => d.name === '技术部')!;
+    // 岗位表先建岗（2 个岗位，编制=3 / 1；序列/带宽正确）
+    expect(技术部.positions).toHaveLength(2);
+    const 前端 = 技术部.positions.find((p) => p.name === '前端工程师')!;
+    expect(前端.headcount).toBe(3);
+    expect(前端.jobFamily).toBe('技术');
+    expect(前端.levelBandMin).toBe('L1');
+    expect(前端.levelBandMax).toBe('L3.2');
+
+    // 员工套岗：张三/李四 → 前端岗位（只查不建，复用岗位表），王五 → 研发经理
+    const 张三 = 技术部.employees.find((e) => e.employeeId === 'E001')!;
+    const 李四 = 技术部.employees.find((e) => e.employeeId === 'E002')!;
+    const 王五 = 技术部.employees.find((e) => e.employeeId === 'E003')!;
+    expect(张三.positionId).toBe(前端.id);
+    expect(李四.positionId).toBe(前端.id);
+    const 研发经理 = 技术部.positions.find((p) => p.name === '研发经理')!;
+    expect(王五.positionId).toBe(研发经理.id);
+
+    // 销售部：岗位名不在岗位表（只查不建）→ 保持未套岗，且不新建岗位
+    const 销售部 = tree.find((d) => d.name === '销售部')!;
+    expect(销售部.positions ?? []).toHaveLength(0);
+    expect(销售部.employees[0].positionId).toBeUndefined();
+
+    // 汇报线：李四的直接上级=张三，按姓名兜底解析到张三的内部 id
+    expect(李四.reportsToEmployeeId).toBe(张三.id);
   });
 });

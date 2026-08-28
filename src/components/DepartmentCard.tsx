@@ -1,11 +1,13 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Plus, Briefcase, X } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { Department, Employee } from '../types';
+import { Department, Employee, MatchStatus } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
 import { useSearchHighlight } from './SearchContext';
 import { employeeLevelGap } from '../utils/analytics';
+import { PositionSummary } from '../utils/analytics';
+import { MatchResult } from '../utils/match';
 import { useDisplaySettings } from '../utils/displaySettings';
 
 interface DepartmentCardProps {
@@ -28,16 +30,205 @@ interface DepartmentCardProps {
   membersExpanded?: boolean;
   /** v2.0.11：切换成员列表展开/收起 */
   onToggleMembers?: (deptId: string) => void;
+  // —— v2.1.1 岗位化 ——
+  positionSummaries?: PositionSummary[];
+  matchStates?: MatchResult[];
+  onCreatePosition?: (deptId: string, name: string) => void;
+  onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
+  onAssignEmployeeToPosition?: (empId: string, positionId: string) => void;
+  onRemoveAssignment?: (empId: string) => void;
+  onCreateVirtualForPosition?: (deptId: string, positionId: string, empId: string) => void;
+}
+
+/** 套岗状态点（placed/unassigned/overstaffed；not_competent 仅预留不产出）。 */
+const MATCH_DOT: Record<MatchStatus, { dot: string; text: string; label: string; title: string }> = {
+  placed: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: '已套岗', title: '已套岗位' },
+  unassigned: { dot: 'bg-amber-500', text: 'text-amber-600', label: '未套岗', title: '未套岗位' },
+  overstaffed: { dot: 'bg-red-500', text: 'text-red-600', label: '超编', title: '岗位超编' },
+  not_competent: { dot: 'bg-slate-400', text: 'text-slate-500', label: '不胜任', title: '不胜任（预留）' },
+};
+
+/** 岗位卡「岗位」区（可折叠，v2.1.1）：展示本部门直属岗位 + 编制/在岗/缺口 + 套岗入口。 */
+function PositionSection({
+  dept,
+  summaryById,
+  allEmployees,
+  onCreatePosition,
+  onSetPositionHeadcount,
+  onAssign,
+  onCreateVirtual,
+}: {
+  dept: Department;
+  summaryById: Map<string, PositionSummary>;
+  allEmployees: Employee[];
+  onCreatePosition?: (deptId: string, name: string) => void;
+  onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
+  onAssign?: (empId: string, positionId: string) => void;
+  onCreateVirtual?: (deptId: string, positionId: string, empId: string) => void;
+}) {
+  const [openAssignPos, setOpenAssignPos] = useState<string | null>(null);
+  const [openVirtualPos, setOpenVirtualPos] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  const positions = dept.positions ?? [];
+  const total = positions.length;
+
+  const addPosition = () => {
+    if (!newName.trim()) return;
+    onCreatePosition?.(dept.id, newName.trim());
+    setNewName('');
+    setCreating(false);
+  };
+
+  return (
+    <div className="px-3 pb-2 border-b border-slate-100">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="flex items-center gap-1 text-xs text-gray-500">
+          <Briefcase className="w-3 h-3 shrink-0" />
+          岗位 ({total})
+        </span>
+        <button
+          onClick={() => setCreating((v) => !v)}
+          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+          title="新建岗位"
+        >
+          <Plus className="w-3 h-3" />
+          新建
+        </button>
+      </div>
+
+      {creating && (
+        <div className="mb-1.5 flex items-center gap-1">
+          <input
+            autoFocus
+            type="text"
+            value={newName}
+            placeholder="岗位名称"
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addPosition();
+              if (e.key === 'Escape') setCreating(false);
+            }}
+            className="flex-1 min-w-0 px-2 py-1 border border-indigo-300 rounded-lg text-xs focus-ring"
+          />
+          <button onClick={addPosition} className="px-2 py-1 rounded-lg text-xs text-white bg-indigo-500 hover:bg-indigo-600">
+            添加
+          </button>
+          <button onClick={() => setCreating(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {positions.length === 0 ? (
+        <div className="text-[11px] text-slate-400 text-center py-1.5">暂无岗位，点「新建」添加</div>
+      ) : (
+        <div className="space-y-1">
+          {positions.map((pos) => {
+            const s = summaryById.get(pos.id);
+            const frozen = pos.status === 'frozen';
+            const assignedCount = s?.assignedCount ?? 0;
+            const gap = s?.gap ?? null;
+            const candidates = allEmployees.filter((e) => !e.isVirtual && e.positionId !== pos.id);
+            return (
+              <div key={pos.id} className="rounded-lg border border-slate-100 bg-white/60 p-1.5">
+                <div className="flex items-center gap-1">
+                  <Briefcase className="w-3 h-3 shrink-0 text-slate-400" />
+                  <span className="text-xs font-medium text-slate-700 truncate">{pos.name}</span>
+                  {frozen && (
+                    <span className="text-[10px] px-1 rounded bg-slate-100 text-slate-500" title="编制已冻结，不计缺口">
+                      冻结
+                    </span>
+                  )}
+                  <span className="ml-auto flex items-center gap-1">
+                    <input
+                      type="number"
+                      min="0"
+                      value={pos.headcount}
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? 0 : Number(e.target.value);
+                        onSetPositionHeadcount?.(dept.id, pos.id, Number.isFinite(v) ? v : 0);
+                      }}
+                      title="岗位编制"
+                      className="w-11 px-1 py-0.5 rounded border border-slate-200 text-right text-xs focus-ring"
+                    />
+                    <span className="text-[10px] text-slate-400">/ 在岗 {assignedCount}</span>
+                    <span className={`text-[10px] font-medium ${gap === null ? 'text-slate-400' : gap > 0 ? 'text-amber-600' : gap < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {gap === null ? (frozen ? '冻结' : '—') : gap > 0 ? `缺 ${gap}` : gap < 0 ? `超 ${Math.abs(gap)}` : '满编'}
+                    </span>
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center gap-1">
+                  <button
+                    onClick={() => setOpenAssignPos(openAssignPos === pos.id ? null : pos.id)}
+                    className="flex-1 text-left px-2 py-1 rounded-md text-[11px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                  >
+                    套岗（选员工）
+                  </button>
+                  <button
+                    onClick={() => setOpenVirtualPos(openVirtualPos === pos.id ? null : pos.id)}
+                    className="flex-1 text-left px-2 py-1 rounded-md text-[11px] text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors"
+                  >
+                    建虚拟兼岗
+                  </button>
+                </div>
+                {openAssignPos === pos.id && (
+                  <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-indigo-100 bg-white py-0.5">
+                    {candidates.length === 0 && <div className="px-2 py-1 text-[11px] text-slate-400">无可套岗员工</div>}
+                    {candidates.map((e) => (
+                      <button
+                        key={e.id}
+                        onClick={() => {
+                          onAssign?.(e.id, pos.id);
+                          setOpenAssignPos(null);
+                        }}
+                        className="w-full text-left px-2 py-1 text-[11px] text-slate-700 hover:bg-indigo-50 truncate"
+                      >
+                        {e.name}（{e.employeeId}）
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {openVirtualPos === pos.id && (
+                  <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-blue-100 bg-white py-0.5">
+                    <div className="px-2 py-1 text-[10px] text-slate-400">从以下员工创建兼岗（跨部门第二角色）</div>
+                    {candidates.length === 0 && <div className="px-2 py-1 text-[11px] text-slate-400">无可兼岗员工</div>}
+                    {candidates.map((e) => (
+                      <button
+                        key={e.id}
+                        onClick={() => {
+                          onCreateVirtual?.(dept.id, pos.id, e.id);
+                          setOpenVirtualPos(null);
+                        }}
+                        className="w-full text-left px-2 py-1 text-[11px] text-slate-700 hover:bg-blue-50 truncate"
+                      >
+                        {e.name}（{e.employeeId}）
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function DraggableEmployee({ 
   employee,
   selected,
-  onSelect
+  onSelect,
+  matchStatus,
+  getEmpName,
 }: { 
   employee: Employee;
   selected?: boolean;
   onSelect?: (empId: string, additive: boolean) => void;
+  matchStatus?: MatchStatus;
+  getEmpName?: (id: string) => string;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: employee.id,
@@ -49,6 +240,8 @@ function DraggableEmployee({
   const highlight = useSearchHighlight();
   const isSearchHit = highlight.empIds.has(employee.id);
   const { showLevel, showTitle } = useDisplaySettings();
+  const match = matchStatus ? MATCH_DOT[matchStatus] : null;
+  const primaryName = employee.isVirtual && employee.primaryEmployeeId ? getEmpName?.(employee.primaryEmployeeId) : null;
   
   return (
     <div
@@ -70,6 +263,12 @@ function DraggableEmployee({
     >
       <div className="flex items-center gap-1">
         <User className="w-3 h-3" style={{ color: levelColor }} />
+        {match && (
+          <span
+            className={`w-2 h-2 rounded-full shrink-0 ${match.dot}`}
+            title={`${match.label} · ${match.title}`}
+          />
+        )}
         <span className="truncate">{employee.name}</span>
         {(() => {
           const gap = employeeLevelGap(employee);
@@ -93,8 +292,13 @@ function DraggableEmployee({
           <span className="text-[10px] text-blue-500 font-medium">(兼)</span>
         )}
       </div>
-      {(showTitle || showLevel) && (employee.title || employee.level) && (
+      {(primaryName || showLevel || (showTitle && employee.title)) && (
         <div className="flex items-center gap-1 pl-1">
+          {primaryName && (
+            <span className="text-[10px] text-blue-500 truncate" title={`兼岗归属：${primaryName}`}>
+              {primaryName}
+            </span>
+          )}
           {showTitle && employee.title ? (
             <span className="text-[10px] text-slate-500 truncate">{employee.title}</span>
           ) : null}
@@ -129,7 +333,10 @@ function EmployeeList({
   onCreateVirtual,
   onMoveMultiple,
   departments,
-  currentDeptId
+  currentDeptId,
+  matchStateById,
+  getEmpName,
+  onRemoveAssignment,
 }: { 
   employees: Employee[];
   onDelete: (empId: string) => void;
@@ -141,6 +348,9 @@ function EmployeeList({
   onMoveMultiple?: (empIds: string[], toDeptId: string) => void;
   departments: Department[];
   currentDeptId?: string;
+  matchStateById?: Map<string, MatchResult>;
+  getEmpName?: (id: string) => string;
+  onRemoveAssignment?: (empId: string) => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; empId: string } | null>(null);
   const [showMove, setShowMove] = useState(false);
@@ -168,7 +378,7 @@ function EmployeeList({
           key={emp.id}
           onContextMenu={(e) => handleContextMenu(e, emp.id)}
         >
-          <DraggableEmployee employee={emp} selected={selectedEmpIds?.has(emp.id)} onSelect={onSelect} />
+          <DraggableEmployee employee={emp} selected={selectedEmpIds?.has(emp.id)} onSelect={onSelect} matchStatus={matchStateById?.get(emp.id)?.status} getEmpName={getEmpName} />
           {contextMenu?.empId === emp.id && (
             createPortal(
               <div
@@ -225,6 +435,17 @@ function EmployeeList({
                 >
                   设置目标职级
                 </button>
+                {emp.positionId && (
+                  <button
+                    className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap"
+                    onClick={() => {
+                      onRemoveAssignment?.(emp.id);
+                      setContextMenu(null);
+                    }}
+                  >
+                    取消套岗
+                  </button>
+                )}
                 <button
                   className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-red-500 truncate whitespace-nowrap"
                   onClick={() => {
@@ -260,6 +481,13 @@ export function DepartmentCard({
   onToggleSelectEmp,
   membersExpanded = false,
   onToggleMembers,
+  positionSummaries = [],
+  matchStates = [],
+  onCreatePosition,
+  onSetPositionHeadcount,
+  onAssignEmployeeToPosition,
+  onRemoveAssignment,
+  onCreateVirtualForPosition,
 }: DepartmentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(department.name);
@@ -275,6 +503,17 @@ export function DepartmentCard({
   const isSearchHit = highlight.deptIds.has(department.id);
   const { showLevel, showTitle } = useDisplaySettings();
   const leader = allEmployees.find((e) => e.employeeId === department.leaderId && !e.isVirtual);
+
+  // —— v2.1.1 岗位化：把扁平汇总/匹配状态镜像为 id→数据 查表（部门卡岗位区 / 员工状态点用） ——
+  const summaryById = useMemo(
+    () => new Map<string, PositionSummary>(positionSummaries.map((p) => [p.positionId, p])),
+    [positionSummaries],
+  );
+  const matchById = useMemo(
+    () => new Map<string, MatchResult>(matchStates.map((r) => [r.employeeId, r])),
+    [matchStates],
+  );
+  const getEmpName = useCallback((id: string) => allEmployees.find((e) => e.id === id)?.name ?? '', [allEmployees]);
   
   // 部门拖拽
   const { attributes: deptAttributes, listeners: deptListeners, setNodeRef: setDeptRef, isDragging: isDeptDragging } = useDraggable({
@@ -470,6 +709,19 @@ export function DepartmentCard({
         )}
       </div>
       
+      {/* v2.1.1 岗位区（可折叠，沿组织树向下钻：每部门展示其直属岗位） */}
+      {(department.positions?.length ?? 0) > 0 || onCreatePosition ? (
+        <PositionSection
+          dept={department}
+          summaryById={summaryById}
+          allEmployees={allEmployees}
+          onCreatePosition={onCreatePosition}
+          onSetPositionHeadcount={onSetPositionHeadcount}
+          onAssign={(empId, positionId) => onAssignEmployeeToPosition?.(empId, positionId)}
+          onCreateVirtual={(deptId, positionId, empId) => onCreateVirtualForPosition?.(deptId, positionId, empId)}
+        />
+      ) : null}
+
       {/* 员工列表（v2.0.11：收起/展开全部，替代 max-h-40 滚动；成员多时卡高由布局动态估算） */}
       <div className="px-3 py-2">
         <div className="flex items-center justify-between gap-1 text-xs text-gray-500 mb-2">
@@ -512,6 +764,9 @@ export function DepartmentCard({
               onMoveMultiple={onMoveMultiple}
               departments={allDepartments}
               currentDeptId={department.id}
+              matchStateById={matchById}
+              getEmpName={getEmpName}
+              onRemoveAssignment={(empId) => onRemoveAssignment?.(empId)}
             />
           </div>
         ) : (

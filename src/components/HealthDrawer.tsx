@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { X, RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, GitCompare } from 'lucide-react';
+import { useMemo, useState, Fragment } from 'react';
+import { X, RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, GitCompare, ChevronDown, ChevronRight, Briefcase } from 'lucide-react';
 import { Department, LevelConfig, Scenario } from '../types';
 import {
   computeHealthReport,
@@ -21,6 +21,7 @@ import {
   setStagePreset,
   DEFAULT_STAGE,
   metricCaliberNote,
+  PositionSummary,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
@@ -33,6 +34,10 @@ interface HealthDrawerProps {
   onClearFocus: () => void;
   onFocusDept: (deptId: string) => void;
   onUpdateHeadcount: (deptId: string, value: number) => void;
+  /** v2.1.1：岗位级编制编辑（L3 部门→岗位展开行） */
+  onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
+  /** v2.1.1：岗位级汇总（L3 岗位展开行消费） */
+  positionSummaries?: PositionSummary[];
   onExportReport: () => void;
   currentScenarioName: string;
   /** 场景列表（用于「场景对比」入口可用性判断：≥2 场景才可点） */
@@ -330,6 +335,8 @@ export function HealthDrawer({
   onClearFocus,
   onFocusDept,
   onUpdateHeadcount,
+  onSetPositionHeadcount,
+  positionSummaries = [],
   onExportReport,
   currentScenarioName,
   scenarios,
@@ -339,6 +346,8 @@ export function HealthDrawer({
   const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
   const [thresholdsOpen, setThresholdsOpen] = useState(false);
   const [stage, setStage] = useState<OrganizationStage>(DEFAULT_STAGE);
+  // v2.1.1：L3 部门→岗位展开（已展开的部门 id 集合）
+  const [expandedPosDepts, setExpandedPosDepts] = useState<Set<string>>(() => new Set());
   const report = useMemo(
     () => computeHealthReport(departments, configs, focusDeptId, thresholds),
     [departments, configs, focusDeptId, thresholds],
@@ -347,6 +356,15 @@ export function HealthDrawer({
     () => collectAllSuggestions(report, departments, thresholds),
     [report, departments, thresholds],
   );
+  const positionsByDept = useMemo(() => {
+    const m = new Map<string, PositionSummary[]>();
+    for (const p of positionSummaries) {
+      const list = m.get(p.departmentId) ?? [];
+      list.push(p);
+      m.set(p.departmentId, list);
+    }
+    return m;
+  }, [positionSummaries]);
 
   if (!open) return null;
 
@@ -650,54 +668,126 @@ export function HealthDrawer({
                   </tr>
                 </thead>
                 <tbody>
-                  {report.l3.map((r) => (
-                    <tr key={r.deptId} className="border-b border-slate-50 hover:bg-slate-50/60">
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-600">
-                            {'　'.repeat(Math.min(r.level - 1, 3))}
-                            {r.level > 1 && '└ '}
-                            {r.name}
-                          </span>
-                          <DeptStatusDot status={r.status} headcount={r.headcount} />
-                        </div>
-                      </td>
-                      <td className="px-2 py-2.5 text-right">
-                        <input
-                          type="number"
-                          min="0"
-                          value={r.headcount ?? ''}
-                          placeholder="—"
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : Number(e.target.value);
-                            onUpdateHeadcount(r.deptId, Number.isFinite(val) ? val : 0);
-                          }}
-                          className="w-14 px-1.5 py-1 rounded-md border border-slate-200 text-right text-sm focus-ring"
-                        />
-                      </td>
-                      <td className="px-2 py-2.5 text-right text-slate-700">{r.actual}</td>
-                      <td className="px-2 py-2.5 text-right">
-                        {isHeadcountUnset(r.headcount) ? (
-                          <span className="text-slate-400" title="未配置编制，无法判断空岗/超编">
-                            未配置
-                          </span>
-                        ) : r.gap === null ? (
-                          <span className="text-slate-400">—</span>
-                        ) : (
-                          <span className={r.gap > 0 ? 'text-amber-600' : r.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
-                            {r.gap > 0 ? `+${r.gap} 空岗` : r.gap < 0 ? `${r.gap} 超编` : '满编'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-2 py-2.5 text-right text-slate-600">{fmtCost(r.avgCost)}</td>
-                      <td className="px-2 py-2.5 text-right text-slate-600">{fmtCost(r.actualCost)}</td>
-                      <td className="px-2 py-2.5 text-right">
-                        <span className={r.gapCost > 0 ? 'text-amber-600' : r.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
-                          {fmtCost(r.gapCost)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {report.l3.map((r) => {
+                    const deptPositions = positionsByDept.get(r.deptId) ?? [];
+                    const hasPositions = deptPositions.length > 0;
+                    const isExpanded = expandedPosDepts.has(r.deptId);
+                    const toggle = () =>
+                      setExpandedPosDepts((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(r.deptId)) next.delete(r.deptId);
+                        else next.add(r.deptId);
+                        return next;
+                      });
+                    return (
+                      <Fragment key={r.deptId}>
+                        <tr className="border-b border-slate-50 hover:bg-slate-50/60">
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-1.5">
+                              {hasPositions ? (
+                                <button
+                                  onClick={toggle}
+                                  className="p-0.5 rounded text-slate-400 hover:text-indigo-600"
+                                  title={isExpanded ? '收起岗位' : '展开岗位'}
+                                >
+                                  {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                </button>
+                              ) : (
+                                <span className="w-3.5 shrink-0" />
+                              )}
+                              <span className="text-slate-600">
+                                {'　'.repeat(Math.min(r.level - 1, 3))}
+                                {r.level > 1 && '└ '}
+                                {r.name}
+                              </span>
+                              <DeptStatusDot status={r.status} headcount={r.headcount} />
+                            </div>
+                          </td>
+                          <td className="px-2 py-2.5 text-right">
+                            {hasPositions ? (
+                              <span className="text-slate-600 tabular-nums" title="编制 = 岗位编制之和，可在岗位行编辑">
+                                {r.headcount ?? '—'}
+                              </span>
+                            ) : (
+                              <input
+                                type="number"
+                                min="0"
+                                value={r.headcount ?? ''}
+                                placeholder="—"
+                                onChange={(e) => {
+                                  const val = e.target.value === '' ? 0 : Number(e.target.value);
+                                  onUpdateHeadcount(r.deptId, Number.isFinite(val) ? val : 0);
+                                }}
+                                className="w-14 px-1.5 py-1 rounded-md border border-slate-200 text-right text-sm focus-ring"
+                              />
+                            )}
+                          </td>
+                          <td className="px-2 py-2.5 text-right text-slate-700">{r.actual}</td>
+                          <td className="px-2 py-2.5 text-right">
+                            {isHeadcountUnset(r.headcount) ? (
+                              <span className="text-slate-400" title="未配置编制，无法判断空岗/超编">
+                                未配置
+                              </span>
+                            ) : r.gap === null ? (
+                              <span className="text-slate-400">—</span>
+                            ) : (
+                              <span className={r.gap > 0 ? 'text-amber-600' : r.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
+                                {r.gap > 0 ? `+${r.gap} 空岗` : r.gap < 0 ? `${r.gap} 超编` : '满编'}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-2 py-2.5 text-right text-slate-600">{fmtCost(r.avgCost)}</td>
+                          <td className="px-2 py-2.5 text-right text-slate-600">{fmtCost(r.actualCost)}</td>
+                          <td className="px-2 py-2.5 text-right">
+                            <span className={r.gapCost > 0 ? 'text-amber-600' : r.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
+                              {fmtCost(r.gapCost)}
+                            </span>
+                          </td>
+                        </tr>
+                        {isExpanded &&
+                          deptPositions.map((p) => (
+                            <tr key={p.positionId} className="border-b border-slate-50 bg-slate-50/40">
+                              <td className="px-9 py-1.5">
+                                <span className="flex items-center gap-1 text-xs text-slate-500">
+                                  <Briefcase className="w-3 h-3 shrink-0" />
+                                  {p.name}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={p.headcount}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? 0 : Number(e.target.value);
+                                    onSetPositionHeadcount?.(r.deptId, p.positionId, Number.isFinite(val) ? val : 0);
+                                  }}
+                                  title="岗位编制"
+                                  className="w-12 px-1 py-0.5 rounded-md border border-slate-200 text-right text-xs focus-ring"
+                                />
+                              </td>
+                              <td className="px-2 py-1.5 text-right text-slate-600">{p.assignedCount}</td>
+                              <td className="px-2 py-1.5 text-right">
+                                {p.gap === null ? (
+                                  <span className="text-slate-400 text-xs">—</span>
+                                ) : (
+                                  <span className={`text-xs ${p.gap > 0 ? 'text-amber-600' : p.gap < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                                    {p.gap > 0 ? `+${p.gap}` : p.gap < 0 ? p.gap : '满编'}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5 text-right text-slate-400 text-xs">{fmtCost(p.avgCost)}</td>
+                              <td className="px-2 py-1.5 text-right text-slate-400 text-xs">—</td>
+                              <td className="px-2 py-1.5 text-right">
+                                <span className={`text-xs ${p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}`}>
+                                  {fmtCost(p.gapCost)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr className="bg-slate-50/60">

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Printer, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
-import { Scenario } from '../types';
+import { Scenario, LevelConfig } from '../types';
 import {
   computeScenarioDiff,
   computeScenarioTotals,
@@ -8,7 +8,8 @@ import {
   PersonnelChange,
   ScenarioDiffResult,
 } from '../utils/scenarioDiff';
-import { HEALTH_STATUS_LABEL, HealthStatus, METRIC_CALIBER_NOTES } from '../utils/analytics';
+import { HEALTH_STATUS_LABEL, HealthStatus, METRIC_CALIBER_NOTES, computePositionSummary } from '../utils/analytics';
+import { flattenAllPositions } from './positionUtils';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { APP_VERSION } from '../version';
 
@@ -18,6 +19,8 @@ interface ManagementReportProps {
   baseline: Scenario;
   target: Scenario;
   projectName: string;
+  /** v2.1.1：职级配置（岗位级缺口成本核算用） */
+  levelConfigs?: LevelConfig[];
   onLocateDept: (deptId: string) => void;
   onLocateEmployee: (employeeId: string) => void;
   onToast: (msg: string) => void;
@@ -156,6 +159,7 @@ export function ManagementReport({
   baseline,
   target,
   projectName,
+  levelConfigs = [],
   onLocateDept,
   onLocateEmployee,
   onToast,
@@ -165,6 +169,27 @@ export function ManagementReport({
   const [calibersOpen, setCalibersOpen] = useState(false);
 
   const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target), [baseline, target]);
+
+  // —— v2.1.1 岗位级缺口对比（复用 PositionSummary）——
+  const baselinePositions = useMemo(
+    () => computePositionSummary(flattenAllPositions(baseline.departments), baseline.allEmployeesFlat, levelConfigs),
+    [baseline, levelConfigs],
+  );
+  const targetPositions = useMemo(
+    () => computePositionSummary(flattenAllPositions(target.departments), target.allEmployeesFlat, levelConfigs),
+    [target, levelConfigs],
+  );
+  const deptNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    const walk = (depts: Scenario['departments']) => {
+      for (const d of depts) {
+        m.set(d.id, d.name);
+        walk(d.children);
+      }
+    };
+    walk(target.departments);
+    return m;
+  }, [target.departments]);
 
   const generatedAt = useMemo(
     () => new Date().toLocaleString('zh-CN', { dateStyle: 'long', timeStyle: 'short' }),
@@ -584,6 +609,62 @@ export function ManagementReport({
             </div>
           </div>
         </section>
+
+        {/* ⑥b 岗位级缺口对比（v2.1.1：部门 → 岗位两级，仅列目标场景有岗位者） */}
+        {targetPositions.length > 0 && (
+          <section className="report-section">
+            <h2 className="text-base font-bold text-slate-900 mb-3">岗位级缺口对比（招聘缺口）</h2>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
+                  <th className="text-left py-2 font-medium">岗位</th>
+                  <th className="text-left py-2 font-medium">所属部门</th>
+                  <th className="text-right py-2 font-medium">编制</th>
+                  <th className="text-right py-2 font-medium">在岗</th>
+                  <th className="text-right py-2 font-medium">缺口</th>
+                  <th className="text-right py-2 font-medium">缺口成本</th>
+                </tr>
+              </thead>
+              <tbody>
+                {targetPositions.map((p) => {
+                  const b = baselinePositions.find((x) => x.positionId === p.positionId);
+                  return (
+                    <tr key={p.positionId} className="border-b border-slate-100">
+                      <td className="py-2 text-slate-700">{p.name}</td>
+                      <td className="py-2 text-slate-500">{deptNameById.get(p.departmentId) ?? '—'}</td>
+                      <td className="py-2 text-right text-slate-600">
+                        {fmt(b?.headcount ?? null)} → {fmt(p.headcount)}
+                        {(b?.headcount ?? 0) !== p.headcount && (
+                          <span className="block text-[10px] text-slate-400">Δ {p.headcount - (b?.headcount ?? 0)}</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-right text-slate-700">
+                        {b?.assignedCount ?? 0} → {p.assignedCount}
+                      </td>
+                      <td className="py-2 text-right">
+                        {p.gap === null ? (
+                          <span className="text-slate-400">—</span>
+                        ) : (
+                          <span className={p.gap > 0 ? 'text-amber-600' : p.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
+                            {p.gap > 0 ? `+${p.gap} 空岗` : p.gap < 0 ? `${p.gap} 超编` : '满编'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 text-right">
+                        <span className={p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
+                          {fmtCost(b?.gapCost ?? 0)} → {fmtCost(p.gapCost)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="text-xs text-slate-400 mt-2 leading-snug">
+              岗位级缺口 = 平均月成本 × 缺口；目标职级/带宽优先，缺省回退在岗均值。冻结岗位不计缺口。
+            </p>
+          </section>
+        )}
 
         {/* ⑦ 口径与边界 */}
         <section className="report-section">

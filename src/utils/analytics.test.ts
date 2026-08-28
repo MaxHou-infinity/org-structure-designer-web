@@ -33,8 +33,12 @@ import {
   depthStatusWithBreakdown,
   SpanBreakdown,
   DepthBreakdown,
+  deptHeadcount,
+  computePositionSummary,
+  computeMatchStates,
+  MatchResult,
 } from './analytics';
-import { Employee, Department, LevelConfig } from '../types';
+import { Employee, Department, LevelConfig, Position } from '../types';
 
 /** 便捷构造员工 */
 function emp(id: string, level: string, opts: Partial<Employee> = {}): Employee {
@@ -59,7 +63,30 @@ function dept(
     headcount: opts.headcount,
     leaderId: opts.leaderId,
     leaderName: opts.leaderName,
+    leaderType: opts.leaderType,
+    positions: opts.positions ?? [],
   };
+}
+
+/** 便捷构造岗位（v2.1.1） */
+function pos(id: string, departmentId: string, name: string, opts: Partial<Position> = {}): Position {
+  const now = new Date().toISOString();
+  return {
+    id,
+    departmentId,
+    name,
+    headcount: opts.headcount ?? 1,
+    status: opts.status ?? 'active',
+    levelBandMin: opts.levelBandMin,
+    levelBandMax: opts.levelBandMax,
+    createdAt: opts.createdAt ?? now,
+    updatedAt: opts.updatedAt ?? now,
+  };
+}
+
+/** 便捷构造员工（带套岗外键 positionId 可选） */
+function empAssigned(id: string, level: string, positionId: string, opts: Partial<Employee> = {}): Employee {
+  return { id, name: `员工${id}`, employeeId: id, level, positionId, ...opts };
 }
 
 const COSTS: LevelConfig[] = [
@@ -166,6 +193,7 @@ describe('computeL2（红黄绿阈值 + 判读）', () => {
       multiDeptManagers: 0,
       totalEmployees: 7,
       nonManagerEmployees: 5,
+      vacantLeaderDepts: 0,
     });
   });
 
@@ -1246,5 +1274,267 @@ describe('v2.0.9 C 管理者比口径修正', () => {
     expect(ratio.value).toBeNull();
     expect(ratio.status).toBe('warn');
     expect(ratio.verdict).toContain('无员工数据');
+  });
+});
+
+// —— —— v2.1.1 健康度联动（岗位级编制/缺口/成本 + leaderType 精确化 + 状态机接入） —— ——
+
+describe('v2.1.1 deptHeadcount（统一编制入口）', () => {
+  it('优先聚合直属岗位 active 编制之和', () => {
+    const d = dept('d', 'D', 1, {
+      positions: [pos('p1', 'd', '工程师', { headcount: 3 }), pos('p2', 'd', '产品', { headcount: 2 })],
+    });
+    expect(deptHeadcount(d)).toBe(5);
+  });
+
+  it('frozen / archived 岗位不计编制（frozen 不计待补缺口）', () => {
+    const d = dept('d', 'D', 1, {
+      positions: [
+        pos('p1', 'd', '工程师', { headcount: 3 }),
+        pos('p2', 'd', '冻结岗', { headcount: 4, status: 'frozen' }),
+        pos('p3', 'd', '归档岗', { headcount: 5, status: 'archived' }),
+      ],
+    });
+    expect(deptHeadcount(d)).toBe(3);
+  });
+
+  it('无 positions → 回退部门级冗余派生 headcount（过渡期兼容）', () => {
+    expect(deptHeadcount(dept('d', 'D', 1, { headcount: 7 }))).toBe(7);
+    expect(deptHeadcount(dept('d', 'D', 1, {}))).toBeNull();
+    expect(deptHeadcount(dept('d', 'D', 1, { headcount: 0 }))).toBeNull(); // 0 = 未配置
+  });
+
+  it('positions 存在但聚合为 0（全 frozen/0）→ null，不回退 headcount', () => {
+    const d = dept('d', 'D', 1, {
+      headcount: 9,
+      positions: [pos('p1', 'd', '冻结', { headcount: 0, status: 'frozen' })],
+    });
+    expect(deptHeadcount(d)).toBeNull();
+  });
+
+  it('active 但 headcount<=0 的岗位不计编制（与 captain 定稿 headcount>0 口径一致）', () => {
+    // active + headcount 0（= 编制未配置/冻结）→ 不计；仅 active + headcount>0 才累加
+    const d = dept('d', 'D', 1, {
+      positions: [
+        pos('p1', 'd', '未配置', { headcount: 0 }),
+        pos('p2', 'd', '有效岗', { headcount: 4 }),
+      ],
+    });
+    expect(deptHeadcount(d)).toBe(4);
+  });
+});
+
+describe('v2.1.1 computePositionSummary（岗位级编制/缺口/成本）', () => {
+  it('空岗：gap = headcount - assignedCount；gapCost 用 levelBand 目标职级成本', () => {
+    const positions = [pos('p1', 'd1', '工程师', { headcount: 3, levelBandMin: 'L1.1' })];
+    const employees = [empAssigned('e1', 'L1.1', 'p1'), empAssigned('e2', 'L1.1', 'p1')];
+    const row = computePositionSummary(positions, employees, COSTS)[0];
+    expect(row).toMatchObject({
+      positionId: 'p1',
+      departmentId: 'd1',
+      name: '工程师',
+      headcount: 3,
+      assignedCount: 2,
+      gap: 1,
+      avgCost: 2, // 套岗 2 人，职级 L1.1 成本 2
+      gapCost: 2, // 1 × unit(levelBand L1.1→2)
+    });
+    expect(row.status).toBe('danger'); // 1/3=33% > 20%
+  });
+
+  it('超编：assigned > headcount → gap 负 + 按 overStatus 分级', () => {
+    const positions = [pos('p1', 'd1', '工程师', { headcount: 1 })];
+    const employees = [empAssigned('e1', 'L1.1', 'p1'), empAssigned('e2', 'L1.1', 'p1')];
+    const row = computePositionSummary(positions, employees, COSTS)[0];
+    expect(row.gap).toBe(-1);
+    expect(row.assignedCount).toBe(2);
+    expect(row.status).toBe('danger'); // 超编 1/2=50% > 20%
+  });
+
+  it('frozen 岗位不计缺口：gap null、gapCost 0、status 关注（未配置/冻结）', () => {
+    const positions = [pos('p1', 'd1', '冻结岗位', { headcount: 4, status: 'frozen' })];
+    const employees = [empAssigned('e1', 'L1.1', 'p1')];
+    const row = computePositionSummary(positions, employees, COSTS)[0];
+    expect(row.gap).toBeNull();
+    expect(row.gapCost).toBe(0);
+    expect(row.status).toBe('warn');
+  });
+
+  it('archived 岗位被过滤', () => {
+    const positions = [
+      pos('p1', 'd1', '归档岗', { status: 'archived' }),
+      pos('p2', 'd1', '正常岗', { headcount: 1 }),
+    ];
+    expect(computePositionSummary(positions, [], COSTS).map((x) => x.positionId)).toEqual(['p2']);
+  });
+
+  it('虚拟兼岗副本不计套岗人数', () => {
+    const positions = [pos('p1', 'd1', '工程师', { headcount: 2 })];
+    const employees = [
+      empAssigned('real', 'L1.1', 'p1'),
+      empAssigned('virt', 'L1.1', 'p1', { isVirtual: true }),
+    ];
+    const row = computePositionSummary(positions, employees, COSTS)[0];
+    expect(row.assignedCount).toBe(1);
+    expect(row.gap).toBe(1);
+  });
+
+  it('编制 0（非 frozen）→ gap null 不计缺口：status 关注', () => {
+    const row = computePositionSummary([pos('p1', 'd1', '待定', { headcount: 0 })], [], COSTS)[0];
+    expect(row.gap).toBeNull();
+    expect(row.status).toBe('warn');
+  });
+
+  it('无 levelBand → gapCost 用套岗员工 targetLevel 成本（L3.2→5）', () => {
+    const positions = [pos('p1', 'd1', '工程师', { headcount: 2 })];
+    const employees = [empAssigned('e1', 'L1.1', 'p1', { targetLevel: 'L3.2' })];
+    const row = computePositionSummary(positions, employees, COSTS)[0];
+    // gap = 2-1 = 1；unit = targetLevel L3.2 成本 5 → gapCost 5
+    expect(row.gapCost).toBe(5);
+  });
+
+  it('满编（headcount == assignedCount，显式编制）→ gap 0、status healthy', () => {
+    // 显式编制 = 导入人数时，headcount>0 且 gap=0 → 满编/healthy
+    const positions = [pos('p1', 'd1', '工程师', { headcount: 3 })];
+    const employees = [empAssigned('e1', 'L1.1', 'p1'), empAssigned('e2', 'L1.1', 'p1'), empAssigned('e3', 'L1.1', 'p1')];
+    const row = computePositionSummary(positions, employees, COSTS)[0];
+    expect(row.gap).toBe(0);
+    expect(row.status).toBe('healthy'); // 满编，非 overStatus(0) 的 warn
+  });
+
+  it('主路径（岗位名称、无编制列，import-eng 定案 headcount=0）→ 未配置，即使有人套岗', () => {
+    // import-eng find-or-create 岗位 headcount=0（编制未配置），员工套上后：
+    // 走「未配置/未配置编制」口径：gap=null、status=warn、不计缺口/不计超编、gapCost=0
+    const positions = [pos('p1', 'd1', '前端工程师', { headcount: 0 })];
+    const employees = [empAssigned('e1', 'L1.1', 'p1'), empAssigned('e2', 'L1.1', 'p1')];
+    const row = computePositionSummary(positions, employees, COSTS)[0];
+    expect(row.assignedCount).toBe(2); // 在岗人数仍如实反映
+    expect(row.headcount).toBe(0);
+    expect(row.gap).toBeNull(); // 未配置，不计缺口（不伪装满编）
+    expect(row.status).toBe('warn'); // 未配置 → 关注
+    expect(row.gapCost).toBe(0); // 不计缺口成本
+  });
+});
+
+describe('v2.1.1 computeManagerBreakdown leaderType 精确化', () => {
+  it('分子只计 owner；deputy/acting/external 进 externalManagers；vacant 单独提示', () => {
+    const owner = dept('a', 'A', 1, {
+      leaderType: 'owner',
+      leaderId: 'L01',
+      leaderName: '领导A',
+      employees: [emp('l01', 'L2.1', { employeeId: 'L01', name: '领导A' }), emp('e1', 'L1.1')],
+    });
+    const deputy = dept('b', 'B', 1, {
+      leaderType: 'deputy',
+      leaderId: 'L02',
+      leaderName: '副职B',
+      employees: [emp('l02', 'L2.1', { employeeId: 'L02', name: '副职B' }), emp('e2', 'L1.1')],
+    });
+    const acting = dept('c', 'C', 1, {
+      leaderType: 'acting',
+      leaderId: 'L03',
+      leaderName: '代理C',
+      employees: [emp('l03', 'L2.1', { employeeId: 'L03', name: '代理C' }), emp('e3', 'L1.1')],
+    });
+    const ext = dept('d', 'D', 1, {
+      leaderType: 'external',
+      leaderId: 'EXT1',
+      leaderName: '挂名D',
+      employees: [emp('e4', 'L1.1')],
+    });
+    const vacant = dept('e', 'E', 1, {
+      leaderType: 'vacant',
+      leaderId: 'V1',
+      leaderName: '空缺',
+      employees: [emp('e5', 'L1.1')],
+    });
+    const bd = computeManagerBreakdown([owner, deputy, acting, ext, vacant]);
+    expect(bd.internalManagers).toBe(1); // 只计 owner
+    expect(bd.externalManagers).toBe(3); // deputy + acting + external
+    expect(bd.vacantLeaderDepts).toBe(1); // vacant 提示
+    expect(bd.multiDeptManagers).toBe(0);
+    expect(bd.totalEmployees).toBe(8);
+    const ratio = computeL2([owner, deputy, acting, ext, vacant]).find((x) => x.key === 'managerRatio')!;
+    expect(ratio.value).toBeCloseTo(12.5, 1); // 1/8 = 12.5%
+    expect(ratio.verdict).toContain('负责人空缺'); // vacant 提示
+  });
+
+  it('同一人既为正职又任别处副职 → 仍按内部（不因副职降级）', () => {
+    const a = dept('a', 'A', 1, {
+      leaderType: 'owner',
+      leaderId: 'L01',
+      leaderName: '领导A',
+      employees: [emp('l01', 'L2.1', { employeeId: 'L01', name: '领导A' }), emp('e1', 'L1.1')],
+    });
+    const b = dept('b', 'B', 1, {
+      leaderType: 'deputy',
+      leaderId: 'L01',
+      leaderName: '领导A',
+      employees: [emp('e2', 'L1.1')],
+    });
+    const bd = computeManagerBreakdown([a, b]);
+    expect(bd.internalManagers).toBe(1); // 正职为准
+    expect(bd.externalManagers).toBe(0);
+    expect(bd.multiDeptManagers).toBe(1); // 兼任 2 部门（一处正职）
+  });
+
+  it('缺省 leaderType 视为 owner（兼容旧数据）', () => {
+    const d = dept('d', 'D', 1, {
+      leaderId: 'L01',
+      leaderName: '领导A',
+      employees: [emp('l01', 'L2.1', { employeeId: 'L01', name: '领导A' }), emp('e1', 'L1.1')],
+    });
+    const bd = computeManagerBreakdown([d]);
+    expect(bd.internalManagers).toBe(1);
+    expect(bd.vacantLeaderDepts).toBe(0);
+  });
+});
+
+describe('v2.1.1 状态机接入（computeMatchStates 复用，data-eng 已建 match.ts）', () => {
+  it('computeMatchStates 从 analytics 再导出', () => {
+    expect(typeof computeMatchStates).toBe('function');
+  });
+
+  it('满编 → placed；超编 1 后进者 → overstaffed', () => {
+    const positions = [pos('p1', 'd1', '工程师', { headcount: 2 })];
+    const employees = [
+      empAssigned('e1', 'L1.1', 'p1'),
+      empAssigned('e2', 'L1.1', 'p1'),
+      empAssigned('e3', 'L1.1', 'p1'),
+    ];
+    const states: MatchResult[] = computeMatchStates(employees, positions);
+    expect(states.find((s) => s.employeeId === 'e1')!.status).toBe('placed');
+    expect(states.find((s) => s.employeeId === 'e2')!.status).toBe('placed');
+    expect(states.find((s) => s.employeeId === 'e3')!.status).toBe('overstaffed');
+  });
+
+  it('未套岗 → unassigned；archived 岗位等同未套岗', () => {
+    const positions = [pos('p1', 'd1', '归档', { status: 'archived', headcount: 2 })];
+    const employees = [empAssigned('e1', 'L1.1', 'p1'), empAssigned('e2', 'L1.1', 'p1')];
+    const states = computeMatchStates(employees, positions);
+    expect(states.every((s) => s.status === 'unassigned')).toBe(true);
+  });
+});
+
+describe('v2.1.1 空岗率口径一致（迁移后部门级数字不变）', () => {
+  it('同一部门：positions 聚合 == 部门级 headcount（迁移前后一致）', () => {
+    const mkEmps = () => Array.from({ length: 6 }, (_, i) => emp(`e${i}`, 'L1.1'));
+    // 迁移前：headcount=10（无岗位）
+    const legacy = dept('tech', '技术部', 1, { headcount: 10, employees: mkEmps() });
+    // 迁移后：默认岗位 headcount=10（dept.headcount 为冗余派生）
+    const migrated = dept('tech', '技术部', 1, {
+      headcount: 10,
+      positions: [pos('p1', 'tech', '默认岗位', { headcount: 10 })],
+      employees: mkEmps(),
+    });
+    expect(deptHeadcount(migrated)).toBe(10);
+    const legacyVac = computeL2([legacy]).find((x) => x.key === 'vacancy')!;
+    const migratedVac = computeL2([migrated]).find((x) => x.key === 'vacancy')!;
+    expect(legacyVac.value).toBeCloseTo(40, 0); // (10-6)/10
+    expect(migratedVac.value).toBe(legacyVac.value);
+    expect(migratedVac.status).toBe(legacyVac.status);
+    // L1/L3 部门级数字不变
+    expect(computeL1([migrated])[0].headcount).toBe(computeL1([legacy])[0].headcount);
+    expect(computeL3([migrated], COSTS)[0].headcount).toBe(computeL3([legacy], COSTS)[0].headcount);
   });
 });

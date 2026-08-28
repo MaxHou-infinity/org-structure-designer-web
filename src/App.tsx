@@ -14,8 +14,12 @@ import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
 import { computeUnassignedEmployees } from './utils/analytics';
 import { SearchHighlight } from './components/SearchContext';
-import { Employee, Department, OrgTemplate } from './types';
+import { Employee, Department, OrgTemplate, Position } from './types';
 import { expandDepartments, SearchMatch } from './utils/search';
+import { computePositionSummary } from './utils/analytics';
+import { computeMatchStates } from './utils/match';
+import { flattenAllPositions } from './components/positionUtils';
+import { uid } from './utils/project';
 import { moveEmployeesBetween } from './utils/departments';
 import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
 import {
@@ -66,6 +70,19 @@ function findDept(depts: Department[], id: string): Department | null {
     if (found) return found;
   }
   return null;
+}
+
+/** 递归对部门树内所有同 id 员工应用补丁（岗位套岗/取消套岗等跨部门一致更新用）。 */
+function mapEmployeesInDepts(
+  depts: Department[],
+  empId: string,
+  patch: (e: Employee) => Employee,
+): Department[] {
+  return depts.map((d) => ({
+    ...d,
+    employees: d.employees.map((e) => (e.id === empId ? patch(e) : e)),
+    children: mapEmployeesInDepts(d.children, empId, patch),
+  }));
 }
 
 /** 部门 id → 祖先链（含自身，根在前）；不存在返回 null（供画布定位展开祖先）。 */
@@ -320,6 +337,17 @@ export default function App() {
     [allEmployeesFlat, departments],
   );
 
+  // —— v2.1.1 岗位化：部门树为唯一真值，拍平岗位供 analytics 岗位级汇总/状态机消费 ——
+  const allPositions = useMemo(() => flattenAllPositions(departments), [departments]);
+  const positionSummaries = useMemo(
+    () => computePositionSummary(allPositions, allEmployeesFlat, levelConfigs),
+    [allPositions, allEmployeesFlat, levelConfigs],
+  );
+  const matchStates = useMemo(
+    () => computeMatchStates(allEmployeesFlat, allPositions),
+    [allEmployeesFlat, allPositions],
+  );
+
   /** 将未入架构员工排入指定部门（历史感知） */
   const handlePlaceEmployee = useCallback(
     (empId: string, deptId: string) => {
@@ -357,6 +385,142 @@ export default function App() {
         };
       });
       showToast(t ? `已设置目标职级 ${t}` : '已清除目标职级');
+    },
+    [setBoth, showToast],
+  );
+
+  /** —— v2.1.1 岗位 CRUD / 套岗 —— */
+
+  /** 新建岗位（挂在某部门直属岗位列表）。 */
+  const handleCreatePosition = useCallback(
+    (deptId: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const now = new Date().toISOString();
+      const pos: Position = {
+        id: uid('pos'),
+        departmentId: deptId,
+        name: trimmed,
+        headcount: 0,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      };
+      setDepartments((prev) => {
+        const add = (depts: Department[]): Department[] =>
+          depts.map((d) => {
+            if (d.id === deptId) return { ...d, positions: [...(d.positions ?? []), pos] };
+            if (d.children.length > 0) return { ...d, children: add(d.children) };
+            return d;
+          });
+        return add(prev);
+      });
+      showToast(`已创建岗位「${trimmed}」`);
+    },
+    [setDepartments, showToast],
+  );
+
+  /** 设置岗位编制（headcount<=0 → 视为无编制）。 */
+  const handleSetPositionHeadcount = useCallback(
+    (deptId: string, positionId: string, headcount: number) => {
+      const v = Math.max(0, Math.round(Number.isFinite(headcount) ? headcount : 0));
+      setDepartments((prev) => {
+        const update = (depts: Department[]): Department[] =>
+          depts.map((d) => {
+            if (d.id === deptId) {
+              return {
+                ...d,
+                positions: (d.positions ?? []).map((p) =>
+                  p.id === positionId ? { ...p, headcount: v, updatedAt: new Date().toISOString() } : p,
+                ),
+              };
+            }
+            if (d.children.length > 0) return { ...d, children: update(d.children) };
+            return d;
+          });
+        return update(prev);
+      });
+    },
+    [setDepartments],
+  );
+
+  /** 员工套岗到指定岗位（主岗）。同步更新 allEmployeesFlat 与所有部门员工列表（跨部门一致）。 */
+  const handleAssignEmployeeToPosition = useCallback(
+    (empId: string, positionId: string) => {
+      const emp = allEmployeesRef.current.find((e) => e.id === empId);
+      if (!emp || !positionId) return;
+      const patch = (e: Employee) => (e.id === empId ? { ...e, positionId, assignmentType: 'primary' as const } : e);
+      setBoth((prev) => ({
+        departments: mapEmployeesInDepts(prev.departments, empId, patch),
+        allEmployeesFlat: prev.allEmployeesFlat.map(patch),
+      }));
+      showToast(`已为 ${emp.name} 套岗`);
+    },
+    [setBoth, showToast],
+  );
+
+  /** 取消员工套岗（清空 positionId）。 */
+  const handleRemoveAssignment = useCallback(
+    (empId: string) => {
+      const patch = (e: Employee) => (e.id === empId ? { ...e, positionId: undefined } : e);
+      setBoth((prev) => ({
+        departments: mapEmployeesInDepts(prev.departments, empId, patch),
+        allEmployeesFlat: prev.allEmployeesFlat.map(patch),
+      }));
+      showToast('已取消套岗');
+    },
+    [setBoth, showToast],
+  );
+
+  /** 为某岗位创建「兼岗」虚拟副本（回指真人员工 primaryEmployeeId）。 */
+  const handleCreateVirtualForPosition = useCallback(
+    (deptId: string, positionId: string, empId: string) => {
+      const source = allEmployeesRef.current.find((e) => e.id === empId && !e.isVirtual);
+      if (!source) return;
+      const virtual: Employee = {
+        ...source,
+        id: `virtual-${Date.now()}`,
+        isVirtual: true,
+        positionId,
+        assignmentType: 'secondary',
+        primaryEmployeeId: source.id,
+      };
+      setBoth((prev) => {
+        const add = (depts: Department[]): Department[] =>
+          depts.map((d) => {
+            if (d.id === deptId) return { ...d, employees: [...d.employees, virtual] };
+            if (d.children.length > 0) return { ...d, children: add(d.children) };
+            return d;
+          });
+        return { departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
+      });
+      showToast(`已为 ${source.name} 创建兼岗`);
+    },
+    [setBoth, showToast],
+  );
+
+  /** 抽屉/套岗：把员工排入「某部门 + 某岗位」（移动式：先从旧部门移出，再挂入目标部门并套岗）。 */
+  const handlePlaceEmployeeToPosition = useCallback(
+    (empId: string, deptId: string, positionId: string) => {
+      const emp = allEmployeesRef.current.find((e) => e.id === empId);
+      if (!emp || !positionId) return;
+      setBoth((prev) => {
+        const assign = (e: Employee) => ({ ...e, positionId, assignmentType: 'primary' as const });
+        const remove = (list: Department[]): Department[] =>
+          list.map((d) => ({ ...d, employees: d.employees.filter((e) => e.id !== empId), children: remove(d.children) }));
+        const removed = remove(prev.departments);
+        const add = (list: Department[]): Department[] =>
+          list.map((d) => {
+            if (d.id === deptId) return { ...d, employees: [...d.employees, assign({ ...emp })] };
+            if (d.children.length > 0) return { ...d, children: add(d.children) };
+            return d;
+          });
+        return {
+          departments: add(removed),
+          allEmployeesFlat: prev.allEmployeesFlat.map((e) => (e.id === empId ? assign(e) : e)),
+        };
+      });
+      showToast(`已为 ${emp.name} 排入岗位`);
     },
     [setBoth, showToast],
   );
@@ -859,6 +1023,13 @@ export default function App() {
             onLoadIndustryTemplate={() => handleLoadIndustryTemplate('internet')}
             searchHighlight={searchHighlight}
             onSetTargetLevel={handleSetTargetLevel}
+            positionSummaries={positionSummaries}
+            matchStates={matchStates}
+            onCreatePosition={handleCreatePosition}
+            onSetPositionHeadcount={handleSetPositionHeadcount}
+            onAssignEmployeeToPosition={handleAssignEmployeeToPosition}
+            onRemoveAssignment={handleRemoveAssignment}
+            onCreateVirtualForPosition={handleCreateVirtualForPosition}
           />
         </main>
       </div>
@@ -890,6 +1061,8 @@ export default function App() {
         onClearFocus={() => setHealthFocusDeptId(undefined)}
         onFocusDept={(id) => setHealthFocusDeptId(id)}
         onUpdateHeadcount={handleUpdateHeadcount}
+        onSetPositionHeadcount={handleSetPositionHeadcount}
+        positionSummaries={positionSummaries}
         onExportReport={handleOpenReport}
         currentScenarioName={currentScenario?.name ?? "场景"}
         scenarios={project.scenarios}
@@ -916,6 +1089,7 @@ export default function App() {
         onClose={() => setReportOpen(false)}
         departments={departments}
         levelConfigs={levelConfigs}
+        positionSummaries={positionSummaries}
         projectName={project.name}
         scenarioName={currentScenario?.name ?? "场景"}
         onToast={showToast}
@@ -943,6 +1117,7 @@ export default function App() {
           baseline={baselineScenario}
           target={targetScenario}
           projectName={project.name}
+          levelConfigs={levelConfigs}
           onLocateDept={handleLocateDept}
           onLocateEmployee={handleLocateEmployee}
           onToast={showToast}
@@ -964,7 +1139,12 @@ export default function App() {
         onClose={() => setUnassignedOpen(false)}
         unassignedEmployees={unassignedEmployees}
         departments={departments}
+        allEmployees={allEmployeesFlat}
+        positionSummaries={positionSummaries}
+        matchStates={matchStates}
         onPlaceEmployee={handlePlaceEmployee}
+        onPlaceEmployeeToPosition={handlePlaceEmployeeToPosition}
+        onAssignEmployeeToPosition={handleAssignEmployeeToPosition}
         onToast={showToast}
       />
 

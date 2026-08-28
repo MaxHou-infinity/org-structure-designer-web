@@ -1,5 +1,6 @@
-import { Employee, Department, OrgTemplate } from '../types';
+import { Employee, Department, OrgTemplate, Position } from '../types';
 import type { WorkBook } from 'xlsx';
+import { uid } from './project';
 
 /** 懒加载 xlsx（体积 ~400KB，仅在上传/导出时按需加载） */
 let xlsxModule: typeof import('xlsx') | null = null;
@@ -72,9 +73,62 @@ function isSupportedExtension(ext: string): boolean {
   return (SUPPORTED_EXCEL_EXTENSIONS as readonly string[]).includes(ext);
 }
 
-/** employee 工作表必填列；org 模板工作表必填列 */
+/** employee 工作表必填列；org 模板工作表必填列；岗位表工作表必填列 */
 const REQUIRED_EMPLOYEE_COLUMNS = ['姓名', '一级部门'];
 const REQUIRED_ORG_COLUMNS = ['一级部门'];
+const REQUIRED_POSITION_COLUMNS = ['岗位名称'];
+
+/**
+ * 员工导入行（扩展自 Employee，携带导入侧独有的瞬态字段，用于：
+ * - find-or-create 岗位（`_positionName` 不在 Employee 持久字段内）
+ * - 直接上级按姓名兜底匹配（`_reportsToName`）
+ * 这些 `_` 前缀字段仅存在于导入内存态，不会写入持久化。
+ */
+interface EmployeeImportRow extends Employee {
+  _positionName?: string;
+  _reportsToId?: string;
+  _reportsToName?: string;
+}
+
+/** 岗位表导入行（解析自独立「岗位表」sheet，落地为 Position 前的中间结构）。 */
+export interface PositionImportRow {
+  /** 部门路径（一级~六级，按顺序）；用于解析到具体 Department */
+  deptPath: string[];
+  /** 岗位名称（必填） */
+  name: string;
+  /** 岗位序列（jobFamily，如 技术/产品/设计/职能/管理/销售/运营） */
+  jobFamily?: string;
+  /** 职级带宽下限（fullCode） */
+  levelBandMin?: string;
+  /** 职级带宽上限（fullCode） */
+  levelBandMax?: string;
+  /** 编制数（>=0） */
+  headcount: number;
+}
+
+/** 将单元格值安全转换为数字；空/非有限数返回 undefined（不落 0）。 */
+function cellNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const str = String(value).trim();
+  if (str === '' || str === 'undefined') return undefined;
+  const n = Number(str);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** 判断岗位表「同名岗位去重」是否冲突：同一部门重复出现同名岗位 → 报错（不静默吞）。 */
+function assertNoDuplicatePositions(rows: PositionImportRow[]): void {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = `${row.deptPath.join('/')}::${row.name}`;
+    if (seen.has(key)) {
+      throw new ExcelImportError(
+        'invalid-structure',
+        `岗位表存在同名岗位：部门「${row.deptPath.join('/') || '（未指定部门）'}」下「${row.name}」重复，请去重后重新导入`,
+      );
+    }
+    seen.add(key);
+  }
+}
 
 // ───────────────────────── 读取与解析 ─────────────────────────
 
@@ -185,21 +239,63 @@ function cellString(value: unknown): string {
 
 // ───────────────────────── 行 → 领域对象映射 ─────────────────────────
 
-/** 员工行 → 员工对象（独立导出，测试可复用；字段映射与升级前完全一致） */
+/** 员工行 → 员工对象（独立导出，测试可复用；字段映射与升级前完全一致，v2.1.1 增富字段） */
 export function mapEmployeeRows(rows: Record<string, unknown>[]): Employee[] {
-  return rows.map((row, index) => ({
-    id: `emp-${index}-${Date.now()}`,
-    name: cellString(row['姓名']),
-    employeeId: cellString(row['工号']),
-    level: cellString(row['职级']) || 'NA',
-    title: cellString(row['岗位'] ?? row['职位']) || 'NA',
-    dept1: cellString(row['一级部门']),
-    dept2: cellString(row['二级部门']),
-    dept3: cellString(row['三级部门']),
-    dept4: cellString(row['四级部门']),
-    dept5: cellString(row['五级部门']),
-    dept6: cellString(row['六级部门']),
-  }));
+  return rows.map((row, index) => {
+    const emp: EmployeeImportRow = {
+      id: `emp-${index}-${Date.now()}`,
+      name: cellString(row['姓名']),
+      employeeId: cellString(row['工号']),
+      level: cellString(row['职级']) || 'NA',
+      title: cellString(row['岗位'] ?? row['职位']) || 'NA',
+      dept1: cellString(row['一级部门']),
+      dept2: cellString(row['二级部门']),
+      dept3: cellString(row['三级部门']),
+      dept4: cellString(row['四级部门']),
+      dept5: cellString(row['五级部门']),
+      dept6: cellString(row['六级部门']),
+    };
+    // ── v2.1.1 富字段（可选列，缺省降级为 undefined，不填 0）──
+    // 个人成本
+    const cost = cellNumber(row['个人成本']);
+    if (cost !== undefined) emp.cost = cost;
+    // 目标职级
+    const targetLevel = cellString(row['目标职级']);
+    if (targetLevel) emp.targetLevel = targetLevel;
+    // 直接上级：先在行内留存工号/姓名，待全量员工已知后统一解析为内部 id（见 resolveReportsToEmployeeIds）
+    const reportsToId = cellString(row['直接上级工号']);
+    const reportsToName = cellString(row['直接上级']);
+    emp._reportsToId = reportsToId || undefined;
+    emp._reportsToName = reportsToName || undefined;
+    // 岗位名称（find-or-create 岗位用；非持久字段）
+    const positionName = cellString(row['岗位名称']);
+    emp._positionName = positionName || undefined;
+    return emp;
+  });
+}
+
+/**
+ * 把「直接上级」解析为 reportsToEmployeeId（统一指向被汇报人的内部 id）。
+ * - 优先按「直接上级工号」（employeeId）匹配，兜底「直接上级姓名」；
+ * - 两者都按本批导入的员工 id 解析；工号/姓名均无法命中时，若提供了工号则保留字面值（避免丢引用），否则 undefined。
+ */
+export function resolveReportsToEmployeeIds(employees: Employee[]): Employee[] {
+  const byEmployeeId = new Map<string, string>(); // employeeId -> id
+  const byName = new Map<string, string>(); // name -> id（同名取首个，不静默）
+  for (const e of employees) {
+    if (e.employeeId) byEmployeeId.set(e.employeeId, e.id);
+    if (e.name && !byName.has(e.name)) byName.set(e.name, e.id);
+  }
+  return employees.map((e) => {
+    const row = e as EmployeeImportRow;
+    if (e.reportsToEmployeeId) return e; // 已显式设置则不覆盖
+    const byId = row._reportsToId ? byEmployeeId.get(row._reportsToId) : undefined;
+    const resolved = byId ?? (row._reportsToName ? byName.get(row._reportsToName) : undefined);
+    if (resolved) return { ...e, reportsToEmployeeId: resolved };
+    // 工号提供了但未在批次内命中 → 保留字面工号作为悬空引用（不丢信息）
+    if (row._reportsToId) return { ...e, reportsToEmployeeId: row._reportsToId };
+    return e;
+  });
 }
 
 /** 组织模板行 → OrgTemplate 对象（独立导出，测试可复用） */
@@ -221,7 +317,7 @@ export function mapOrgTemplateRows(rows: Record<string, unknown>[]): OrgTemplate
 
 export async function parseEmployeeExcel(file: File): Promise<Employee[]> {
   const rows = await readAndValidateFile(file, REQUIRED_EMPLOYEE_COLUMNS);
-  return mapEmployeeRows(rows);
+  return resolveReportsToEmployeeIds(mapEmployeeRows(rows));
 }
 
 export async function parseOrgTemplateExcel(file: File): Promise<OrgTemplate[]> {
@@ -229,7 +325,54 @@ export async function parseOrgTemplateExcel(file: File): Promise<OrgTemplate[]> 
   return mapOrgTemplateRows(rows);
 }
 
-export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemplate[]): Department[] {
+/** 岗位表行 → PositionImportRow（独立导出，测试可复用；含同名岗位去重冲突校验） */
+export function mapPositionRows(rows: Record<string, unknown>[]): PositionImportRow[] {
+  const out: PositionImportRow[] = [];
+  for (const row of rows) {
+    const name = cellString(row['岗位名称']);
+    if (!name) continue; // 无岗位名的行不落地
+    const deptPath = [
+      cellString(row['一级部门']),
+      cellString(row['二级部门']),
+      cellString(row['三级部门']),
+      cellString(row['四级部门']),
+      cellString(row['五级部门']),
+      cellString(row['六级部门']),
+    ].filter((n) => Boolean(n));
+    out.push({
+      deptPath,
+      name,
+      jobFamily: cellString(row['序列']) || undefined,
+      levelBandMin: cellString(row['职级带宽下限']) || undefined,
+      levelBandMax: cellString(row['职级带宽上限']) || undefined,
+      headcount: cellNumber(row['编制数']) ?? 0,
+    });
+  }
+  assertNoDuplicatePositions(out);
+  return out;
+}
+
+/** 解析「岗位表」独立 sheet（进阶）：必填列=岗位名称；产出 PositionImportRow[] */
+export async function parsePositionExcel(file: File): Promise<PositionImportRow[]> {
+  const rows = await readAndValidateFile(file, REQUIRED_POSITION_COLUMNS);
+  return mapPositionRows(rows);
+}
+
+/** 递归收集全树所有直属岗位（扁平镜像，供 Scenario.positions / analytics 用）。 */
+export function collectAllPositions(depts: Department[]): Position[] {
+  let acc: Position[] = [];
+  for (const d of depts) {
+    acc = acc.concat(d.positions ?? []);
+    acc = acc.concat(collectAllPositions(d.children));
+  }
+  return acc;
+}
+
+export function buildDepartmentTree(
+  employees: Employee[],
+  orgTemplates: OrgTemplate[],
+  positionRows: PositionImportRow[] = [],
+): Department[] {
   // deptMap: 以 (层级-名称) 为 key 去重；idMap: 以部门 id 反查，用于建立父子关系
   const deptMap = new Map<string, Department>();
   const idMap = new Map<string, Department>();
@@ -245,7 +388,7 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
   ): Department => {
     let dept = deptMap.get(key);
     if (!dept) {
-      dept = { id, name, level, parentId, children: [], employees: [], expanded: level <= 3 };
+      dept = { id, name, level, parentId, children: [], employees: [], expanded: level <= 3, positions: [] };
       deptMap.set(key, dept);
       idMap.set(id, dept);
     }
@@ -307,7 +450,48 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
       rootDepts.push(dept);
     }
   });
-  
+
+  /** 按 deptPath（一级~六级名称）解析到具体部门；找不到返回 undefined。 */
+  const findDeptByDeptPath = (path: string[]): Department | undefined => {
+    if (path.length === 0) return undefined;
+    let found: Department | undefined;
+    for (let i = 0; i < path.length; i++) {
+      found = deptMap.get(deptKey(i + 1, path[i]));
+      if (!found) return undefined;
+    }
+    return found;
+  };
+
+  // 岗位表先行：把「岗位表 sheet」解析出的岗位按部门路径落到对应部门（先建岗）
+  const createdPositions = new Set<string>(); // 去重，防重复建岗
+  // deptId -> (岗位名 -> Position)，供员工套岗「只查不建」
+  const positionByName = new Map<string, Map<string, Position>>();
+  for (const row of positionRows) {
+    const dept = findDeptByDeptPath(row.deptPath);
+    if (!dept || createdPositions.has(`${dept.id}::${row.name}`)) continue;
+    const now = new Date().toISOString();
+    const pos: Position = {
+      id: uid('pos'),
+      departmentId: dept.id,
+      name: row.name,
+      jobFamily: row.jobFamily,
+      levelBandMin: row.levelBandMin,
+      levelBandMax: row.levelBandMax,
+      headcount: row.headcount,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    (dept.positions ??= []).push(pos);
+    createdPositions.add(`${dept.id}::${row.name}`);
+    let m = positionByName.get(dept.id);
+    if (!m) {
+      m = new Map<string, Position>();
+      positionByName.set(dept.id, m);
+    }
+    m.set(pos.name, pos);
+  }
+
   // 将员工分配到对应部门 - 沿树路径逐级精确匹配（替代原 O(n²) 字符串 includes 匹配）
   employees.forEach(emp => {
     const deptNames = [emp.dept1, emp.dept2, emp.dept3, emp.dept4, emp.dept5, emp.dept6]
@@ -332,6 +516,38 @@ export function buildDepartmentTree(employees: Employee[], orgTemplates: OrgTemp
 
     if (matchedDept) {
       matchedDept.employees.push(emp);
+      // ── v2.1.1 套岗：按岗位名称 find-or-create / 只查不建 ──
+      const row = emp as EmployeeImportRow;
+      const posName = row._positionName;
+      if (posName) {
+        const preMap = positionByName.get(matchedDept.id);
+        const existing = preMap?.get(posName);
+        if (existing) {
+          // 岗位表先行：员工套岗「只查不建」
+          emp.positionId = existing.id;
+        } else if (positionRows.length === 0) {
+          // 主路径：find-or-create（同部门同岗复用，避免重复建岗）
+          let pos = (matchedDept.positions ?? []).find(p => p.name === posName);
+          if (!pos) {
+            const now = new Date().toISOString();
+            // 主路径（无编制列）：岗位 headcount=0 = 编制未配置（不伪装满编、不掩盖缺口；
+            // 编制由「岗位表 sheet」或用户在健康度里显式配置。match 已按 headcount<=0 不判超编。）
+            const headcount = 0;
+            pos = {
+              id: uid('pos'),
+              departmentId: matchedDept.id,
+              name: posName,
+              headcount,
+              status: 'active',
+              createdAt: now,
+              updatedAt: now,
+            };
+            (matchedDept.positions ??= []).push(pos);
+          }
+          emp.positionId = pos.id;
+        }
+        // positionRows 存在但该岗位未在表中（且无同名岗位）→ 不建岗，保持未套岗
+      }
     }
   });
   
@@ -423,9 +639,9 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 export async function buildSampleEmployeeTemplateBytes(): Promise<Uint8Array> {
   const XLSX = await loadXlsx();
   const data = [
-    { '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '岗位': '前端工程师', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
-    { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '岗位': '前端开发', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
-    { '姓名': '王五', '工号': 'E003', '职级': 'L4.2', '岗位': '研发经理', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '', '四级部门': '', '五级部门': '', '六级部门': '' },
+    { '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '岗位': '前端工程师', '岗位名称': '前端工程师', '个人成本': '24000', '目标职级': 'L4.1', '直接上级工号': 'E002', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
+    { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '岗位': '前端开发', '岗位名称': '前端工程师', '个人成本': '18000', '目标职级': '', '直接上级工号': 'E001', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '前端组', '四级部门': '', '五级部门': '', '六级部门': '' },
+    { '姓名': '王五', '工号': 'E003', '职级': 'L4.2', '岗位': '研发经理', '岗位名称': '研发经理', '个人成本': '36000', '目标职级': '', '直接上级工号': '', '一级部门': '技术部', '二级部门': '研发部', '三级部门': '', '四级部门': '', '五级部门': '', '六级部门': '' },
   ];
 
   const worksheet = XLSX.utils.json_to_sheet(data);

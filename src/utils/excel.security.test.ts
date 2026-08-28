@@ -14,6 +14,7 @@ import {
   mapEmployeeRows,
   mapOrgTemplateRows,
   buildDepartmentTree,
+  parsePositionExcel,
 } from './excel';
 import type { Department } from '../types';
 
@@ -237,5 +238,23 @@ describe('Excel 导入校验工具', () => {
     const generic = new Error('boom');
     expect(getImportErrorMessage(generic)).toBe('导入失败，请检查文件后重试');
     expect(getImportErrorMessage(undefined)).toBe('导入失败，请检查文件后重试');
+  });
+});
+
+describe('岗位表 sheet 结构校验（SEC-8..9）', () => {
+  it('SEC-8 缺必填列「岗位名称」→ missing-columns', async () => {
+    const aoa = [['一级部门', '编制数'], ['技术部', '2']];
+    const buf = buildWorkbookBytes(aoa);
+    const file = new File([buf], '岗位表.xlsx');
+    await expect(parsePositionExcel(file)).rejects.toMatchObject({
+      kind: 'missing-columns',
+      missingColumns: ['岗位名称'],
+    });
+  });
+
+  it('SEC-9 空表/仅表头无数据 → empty，不静默生成', async () => {
+    const buf = buildWorkbookBytes([['岗位名称', '一级部门']]); // 仅表头
+    const file = new File([buf], '岗位表.xlsx');
+    await expect(parsePositionExcel(file)).rejects.toMatchObject({ kind: 'empty' });
   });
 });

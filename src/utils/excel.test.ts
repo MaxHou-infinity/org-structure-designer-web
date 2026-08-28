@@ -8,6 +8,10 @@ import {
   buildSampleOrgTemplateBytes,
   generateSampleEmployeeTemplate,
   generateSampleOrgTemplate,
+  mapEmployeeRows,
+  mapPositionRows,
+  resolveReportsToEmployeeIds,
+  collectAllPositions,
 } from './excel';
 import { saveFile } from './tauri';
 
@@ -192,6 +196,7 @@ describe('buildOrgExcelBytes / exportToExcel', () => {
         emp({ name: '兼岗', employeeId: 'V001', dept1: '技术部', isVirtual: true }),
       ],
       expanded: true,
+      positions: [],
     }];
     const bytes = await buildOrgExcelBytes(tree);
     // xlsx 文件以 PK (zip) 魔数开头
@@ -208,6 +213,7 @@ describe('buildOrgExcelBytes / exportToExcel', () => {
       children: [],
       employees: [emp({ name: '张三', employeeId: 'E001', dept1: '技术部' })],
       expanded: true,
+      positions: [],
     }];
     await exportToExcel(tree);
     expect(saveFile).toHaveBeenCalledOnce();
@@ -267,5 +273,142 @@ describe('模板下载字节有效性', () => {
     await generateSampleOrgTemplate();
     expect(saveFile).toHaveBeenCalledOnce();
     expect(saveFile).toHaveBeenCalledWith('组织架构模板.xlsx', expect.any(Uint8Array), XLSX_MIME);
+  });
+});
+
+describe('v2.1.1 富字段导入：员工表可选列 + 缺省降级', () => {
+  it('mapEmployeeRows 解析成本/目标职级/直接上级工号/岗位名称', () => {
+    const rows = [
+      {
+        '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '一级部门': '技术部',
+        '个人成本': '24000', '目标职级': 'L4.1', '直接上级工号': 'E002', '岗位名称': '前端工程师',
+      },
+    ];
+    const [e] = mapEmployeeRows(rows);
+    expect(e.cost).toBe(24000);
+    expect(e.targetLevel).toBe('L4.1');
+    // reportsTo 在行内留存（_reportsToId），由 resolveReportsToEmployeeIds 统一解析为内部 id
+    expect((e as unknown as Record<string, unknown>)._reportsToId).toBe('E002');
+    // _positionName 为瞬态字段，运行时存在但不在类型上
+    expect((e as unknown as Record<string, unknown>)._positionName).toBe('前端工程师');
+  });
+
+  it('缺省降级：无富字段列 → cost/targetLevel/reportsTo/岗位 均 undefined（不填 0）', () => {
+    const rows = [
+      { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '一级部门': '技术部' },
+    ];
+    const [e] = mapEmployeeRows(rows);
+    expect(e.cost).toBeUndefined();
+    expect(e.targetLevel).toBeUndefined();
+    expect(e.reportsToEmployeeId).toBeUndefined();
+    expect((e as unknown as Record<string, unknown>)._positionName).toBeUndefined();
+  });
+
+  it('个人成本非数字或空 → undefined（不落 0）', () => {
+    const [a] = mapEmployeeRows([{ '姓名': 'A', '工号': 'E1', '一级部门': '技术部', '个人成本': '' }]);
+    const [b] = mapEmployeeRows([{ '姓名': 'B', '工号': 'E2', '一级部门': '技术部', '个人成本': 'abc' }]);
+    expect(a.cost).toBeUndefined();
+    expect(b.cost).toBeUndefined();
+  });
+
+  it('resolveReportsToEmployeeIds 按姓名兜底匹配直接上级（解析为内部 id）', () => {
+    const [e1] = mapEmployeeRows([{ '姓名': '张三', '工号': 'E001', '一级部门': '技术部' }]);
+    const [e2] = mapEmployeeRows([{ '姓名': '王五', '工号': 'E003', '一级部门': '销售部', '直接上级': '张三' }]);
+    const resolved = resolveReportsToEmployeeIds([e1, e2]);
+    expect(resolved[1].reportsToEmployeeId).toBe(e1.id);
+  });
+});
+
+describe('v2.1.1 富字段导入：建树 + 套岗', () => {
+  it('员工岗位名称 → 部门下 find-or-create 岗位并套岗', () => {
+    const employees = mapEmployeeRows([
+      { '姓名': '张三', '工号': 'E001', '职级': 'L3.2', '一级部门': '技术部', '岗位名称': '前端工程师' },
+      { '姓名': '李四', '工号': 'E002', '职级': 'L2.1', '一级部门': '技术部', '岗位名称': '前端工程师' },
+      { '姓名': '王五', '工号': 'E003', '职级': 'L4.2', '一级部门': '技术部', '岗位名称': '研发经理' },
+    ]);
+    const tree = buildDepartmentTree(employees, []);
+    const 技术部 = tree[0];
+    // 每个部门 positions 非空且被三个岗位填充
+    expect(技术部.positions).toHaveLength(2);
+    // 主路径无编制列 → headcount=0（编制未配置，不伪装满编；match 按 headcount<=0 不判超编）
+    const 前端 = 技术部.positions.find((p) => p.name === '前端工程师');
+    const 经理 = 技术部.positions.find((p) => p.name === '研发经理');
+    expect(前端!.headcount).toBe(0);
+    expect(经理!.headcount).toBe(0);
+    // 员工已套岗到对应岗位
+    expect(技术部.employees.find((e) => e.employeeId === 'E001')!.positionId).toBe(前端!.id);
+    expect(技术部.employees.find((e) => e.employeeId === 'E002')!.positionId).toBe(前端!.id);
+    expect(技术部.employees.find((e) => e.employeeId === 'E003')!.positionId).toBe(经理!.id);
+  });
+
+  it('岗位表先行（positionRows）：员工套岗「只查不建」，未匹配岗位保持未套岗', () => {
+    const employees = mapEmployeeRows([
+      { '姓名': '张三', '工号': 'E001', '一级部门': '技术部', '岗位名称': '前端工程师' },
+      { '姓名': '李四', '工号': 'E002', '一级部门': '技术部', '岗位名称': '不存在岗位' },
+    ]);
+    const positionRows = mapPositionRows([
+      { '一级部门': '技术部', '岗位名称': '前端工程师', '编制数': 3, '序列': '技术' },
+    ]);
+    const tree = buildDepartmentTree(employees, [], positionRows);
+    const 技术部 = tree[0];
+    // 岗位表先建岗，编制=3
+    expect(技术部.positions).toHaveLength(1);
+    expect(技术部.positions[0].headcount).toBe(3);
+    expect(技术部.positions[0].jobFamily).toBe('技术');
+    // 匹配到岗位表的员工套岗；未匹配的保持未套岗（不新建）
+    expect(技术部.employees.find((e) => e.employeeId === 'E001')!.positionId).toBe(技术部.positions[0].id);
+    expect(技术部.employees.find((e) => e.employeeId === 'E002')!.positionId).toBeUndefined();
+  });
+
+  it('collectAllPositions 扁平收集所有部门岗位', () => {
+    const employees = mapEmployeeRows([
+      { '姓名': '张三', '工号': 'E001', '一级部门': '技术部', '岗位名称': '前端工程师' },
+      { '姓名': '王五', '工号': 'E003', '一级部门': '销售部', '岗位名称': '销售经理' },
+    ]);
+    const tree = buildDepartmentTree(employees, []);
+    const all = collectAllPositions(tree);
+    expect(all).toHaveLength(2);
+    expect(all.map((p) => p.name).sort()).toEqual(['前端工程师', '销售经理'].sort());
+  });
+});
+
+describe('v2.1.1 岗位表 sheet：mapPositionRows', () => {
+  it('映射部门路径/岗位名称/序列/职级带宽/编制数', () => {
+    const rows = [
+      { '一级部门': '技术部', '二级部门': '研发组', '岗位名称': '前端工程师', '序列': '技术', '职级带宽下限': 'L1', '职级带宽上限': 'L3.2', '编制数': 5 },
+    ];
+    const [p] = mapPositionRows(rows);
+    expect(p.deptPath).toEqual(['技术部', '研发组']);
+    expect(p.name).toBe('前端工程师');
+    expect(p.jobFamily).toBe('技术');
+    expect(p.levelBandMin).toBe('L1');
+    expect(p.levelBandMax).toBe('L3.2');
+    expect(p.headcount).toBe(5);
+  });
+
+  it('编制数缺省为 0；空字符串/非数字不报错', () => {
+    const rows = [
+      { '一级部门': '技术部', '岗位名称': 'A', '编制数': '' },
+      { '一级部门': '技术部', '岗位名称': 'B' },
+    ];
+    const res = mapPositionRows(rows);
+    expect(res[0].headcount).toBe(0);
+    expect(res[1].headcount).toBe(0);
+  });
+
+  it('同名岗位去重：同一部门重复同名 → 抛 invalid-structure（不静默吞）', () => {
+    const rows = [
+      { '一级部门': '技术部', '岗位名称': '前端工程师', '编制数': 1 },
+      { '一级部门': '技术部', '岗位名称': '前端工程师', '编制数': 2 },
+    ];
+    expect(() => mapPositionRows(rows)).toThrow(/同名岗位/);
+  });
+
+  it('不同部门可同名（不误判冲突）', () => {
+    const rows = [
+      { '一级部门': '技术部', '岗位名称': '经理' },
+      { '一级部门': '销售部', '岗位名称': '经理' },
+    ];
+    expect(mapPositionRows(rows)).toHaveLength(2);
   });
 });

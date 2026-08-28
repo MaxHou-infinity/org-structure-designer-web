@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseProject, serializeProject } from './project';
 import { DEFAULT_LEVELS } from './levels';
+import { computeL2, computeL3 } from './analytics';
 import type { ProjectFile, Scenario } from '../types';
 
 /** v1 项目 fixture：d1(编制5)、d2(编制3，有员工)、d3(未配置编制，有员工) */
@@ -116,6 +117,24 @@ describe('.orgproj v1→v2 迁移（岗位化）', () => {
     const again = parseProject(serializeProject(v2))!;
     expect(again.scenarios[0].positions?.length).toBe(2);
     expect(again.version).toBe(2);
+  });
+
+  it('关键准则「数字不变」：v1 迁移 v2 后 computeL2/L3 指标与迁移前完全一致', () => {
+    const before = v1ProjectFixture().scenarios[0];
+    const migrated = parseProject(serializeProject(v1ProjectFixture()))!.scenarios[0];
+
+    const l2Before = computeL2(before.departments);
+    const l2After = computeL2(migrated.departments);
+    for (let i = 0; i < l2Before.length; i++) {
+      expect(l2After[i].key).toBe(l2Before[i].key);
+      expect(l2After[i].value).toBe(l2Before[i].value); // 空岗率等数值不变
+      expect(l2After[i].status).toBe(l2Before[i].status);
+    }
+
+    const l3Before = computeL3(before.departments, before.levelConfigs);
+    const l3After = computeL3(migrated.departments, migrated.levelConfigs);
+    expect(l3After.map((r) => r.gap)).toEqual(l3Before.map((r) => r.gap));
+    expect(l3After.map((r) => r.actual)).toEqual(l3Before.map((r) => r.actual));
   });
 });
 

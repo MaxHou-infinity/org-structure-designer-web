@@ -8,6 +8,7 @@ import {
   HEALTH_STATUS_LABEL,
   SuggestionSeverity,
   METRIC_CALIBER_NOTES,
+  PositionSummary,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 
@@ -16,6 +17,8 @@ interface DiagnosticReportProps {
   onClose: () => void;
   departments: Department[];
   levelConfigs: LevelConfig[];
+  /** v2.1.1：岗位级汇总（招聘缺口/岗位级缺口表用） */
+  positionSummaries?: PositionSummary[];
   projectName: string;
   scenarioName: string;
   onToast: (msg: string) => void;
@@ -96,6 +99,7 @@ export function DiagnosticReport({
   onClose,
   departments,
   levelConfigs,
+  positionSummaries = [],
   projectName,
   scenarioName,
   onToast,
@@ -105,6 +109,12 @@ export function DiagnosticReport({
     () => computeHealthReport(departments, levelConfigs),
     [departments, levelConfigs],
   );
+
+  const deptNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of flattenForDetail(departments)) m.set(d.id, d.name);
+    return m;
+  }, [departments]);
 
   const suggestions = useMemo(
     () => collectAllSuggestions(report, departments),
@@ -330,6 +340,52 @@ export function DiagnosticReport({
             </tbody>
           </table>
         </section>
+
+        {/* 岗位级缺口表（v2.1.1：招聘缺口视图，部门 → 岗位两级） */}
+        {positionSummaries.length > 0 && (
+          <section className="report-section">
+            <h2 className="text-base font-bold text-slate-900 mb-3">岗位级缺口（招聘缺口）</h2>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
+                  <th className="text-left py-2 font-medium">岗位</th>
+                  <th className="text-left py-2 font-medium">所属部门</th>
+                  <th className="text-right py-2 font-medium">编制</th>
+                  <th className="text-right py-2 font-medium">在岗</th>
+                  <th className="text-right py-2 font-medium">缺口</th>
+                  <th className="text-right py-2 font-medium">缺口成本</th>
+                </tr>
+              </thead>
+              <tbody>
+                {positionSummaries.map((p) => (
+                  <tr key={p.positionId} className="border-b border-slate-100">
+                    <td className="py-2 text-slate-700">{p.name}</td>
+                    <td className="py-2 text-slate-500">{deptNameById.get(p.departmentId) ?? '—'}</td>
+                    <td className="py-2 text-right text-slate-600">{p.headcount}</td>
+                    <td className="py-2 text-right text-slate-700">{p.assignedCount}</td>
+                    <td className="py-2 text-right">
+                      {p.gap === null ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <span className={p.gap > 0 ? 'text-amber-600' : p.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
+                          {p.gap > 0 ? `+${p.gap} 空岗` : p.gap < 0 ? `${p.gap} 超编` : '满编'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      <span className={p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
+                        {fmtCost(p.gapCost)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-slate-400 mt-2 leading-snug">
+              岗位级缺口 = 平均月成本 × 缺口；目标职级/带宽优先，缺省回退在岗均值。冻结岗位不计缺口。
+            </p>
+          </section>
+        )}
 
         {/* 诊断建议 / 组织优化建议 */}
         <section className="report-section">
