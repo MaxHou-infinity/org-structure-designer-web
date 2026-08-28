@@ -40,11 +40,17 @@ export function AppModal({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fadeIn" onClick={onClose} />
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fadeIn"
+        onClick={onClose}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
       <div
         role="dialog"
         aria-modal="true"
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         className={`relative w-full ${maxWidth} max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp`}
       >
         <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-slate-100">

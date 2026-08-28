@@ -491,6 +491,9 @@ export function DepartmentCard({
   const { attributes: deptAttributes, listeners: deptListeners, setNodeRef: setDeptRef, isDragging: isDeptDragging } = useDraggable({
     id: `dept-drag-${department.id}`,
     data: { type: 'department', department },
+    // v2.1.1：本卡打开「新建岗位/目标职级」弹窗时禁用拖拽 —— 否则弹窗内原生 <select>
+    // 交互的指针移动会被 dnd-kit PointerSensor 误判为对卡的拖拽（用户反馈）。
+    disabled: positionModalOpen || !!targetLevelEmp,
   });
   
   const { setNodeRef, isOver } = useDroppable({
