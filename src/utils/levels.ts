@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { LevelConfig } from '../types';
-import { validateLevelCode, validateLevelNumber, fullCode, normalizeLevelNumber } from './level';
+import { validateLevelCode, validateLevelNumber, fullCode, normalizeLevelNumber, autoColor } from './level';
 
 /**
  * 职级配置系统。
@@ -13,21 +13,25 @@ import { validateLevelCode, validateLevelNumber, fullCode, normalizeLevelNumber 
 
 const STORAGE_KEY = 'org-designer.level-configs';
 
-/** 默认职级配置（与历史硬编码保持一致，作为迁移默认值；cost 为月均成本，单位 w） */
+/**
+ * 默认职级配置（cost 为月均成本，单位 w）。
+ * v2.0.12 起 color 由语义化 autoColor 统一生成（L=indigo 系、E=emerald 系，随级别递进深浅），
+ * 与用户自建职级的自动配色规则保持一致。
+ */
 export const DEFAULT_LEVELS: LevelConfig[] = [
-  { code: 'L', number: '0', label: '实习生', color: '#FF9999', cost: 0.5 },
-  { code: 'L', number: '1.1', label: '初级专员', color: '#FFCC99', cost: 1.2 },
-  { code: 'L', number: '1.2', label: '中级专员', color: '#FFFF99', cost: 1.5 },
-  { code: 'L', number: '2.1', label: '高级专员', color: '#CCFF99', cost: 2.0 },
-  { code: 'L', number: '2.2', label: '资深专员', color: '#99FF99', cost: 2.4 },
-  { code: 'L', number: '3.1', label: '团队经理', color: '#99FFCC', cost: 3.0 },
-  { code: 'E', number: '3.1', label: '专家', color: '#99CCFF', cost: 3.6 },
-  { code: 'L', number: '3.2', label: '部门经理', color: '#9999FF', cost: 4.0 },
-  { code: 'E', number: '3.2', label: '高级专家', color: '#CC99FF', cost: 4.8 },
-  { code: 'L', number: '4.1', label: '高级经理', color: '#FF99CC', cost: 5.5 },
-  { code: 'E', number: '4.1', label: '资深专家', color: '#FF99FF', cost: 6.5 },
-  { code: 'L', number: '4.2', label: '总监', color: '#CCCCCC', cost: 8.0 },
-  { code: 'L', number: '5', label: '副总裁', color: '#999999', cost: 12.0 },
+  { code: 'L', number: '0', label: '实习生', color: autoColor('L0'), cost: 0.5 },
+  { code: 'L', number: '1.1', label: '初级专员', color: autoColor('L1.1'), cost: 1.2 },
+  { code: 'L', number: '1.2', label: '中级专员', color: autoColor('L1.2'), cost: 1.5 },
+  { code: 'L', number: '2.1', label: '高级专员', color: autoColor('L2.1'), cost: 2.0 },
+  { code: 'L', number: '2.2', label: '资深专员', color: autoColor('L2.2'), cost: 2.4 },
+  { code: 'L', number: '3.1', label: '团队经理', color: autoColor('L3.1'), cost: 3.0 },
+  { code: 'E', number: '3.1', label: '专家', color: autoColor('E3.1'), cost: 3.6 },
+  { code: 'L', number: '3.2', label: '部门经理', color: autoColor('L3.2'), cost: 4.0 },
+  { code: 'E', number: '3.2', label: '高级专家', color: autoColor('E3.2'), cost: 4.8 },
+  { code: 'L', number: '4.1', label: '高级经理', color: autoColor('L4.1'), cost: 5.5 },
+  { code: 'E', number: '4.1', label: '资深专家', color: autoColor('E4.1'), cost: 6.5 },
+  { code: 'L', number: '4.2', label: '总监', color: autoColor('L4.2'), cost: 8.0 },
+  { code: 'L', number: '5', label: '副总裁', color: autoColor('L5'), cost: 12.0 },
 ];
 
 /**

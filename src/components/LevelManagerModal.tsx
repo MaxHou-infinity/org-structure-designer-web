@@ -34,6 +34,8 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
+  /** v2.0.12：当前展示「自定义颜色」控件的行；null = 默认只读自动色块 */
+  const [customColorIdx, setCustomColorIdx] = useState<number | null>(null);
 
   if (!open) return null;
 
@@ -189,21 +191,49 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
                     />
                     <span className="text-[10px] text-slate-400 w-6">w</span>
                   </div>
-                  {/* 颜色 */}
+                  {/* 颜色（v2.0.12：默认语义化自动配色——序列色系+级别深浅；点击色块可自定义） */}
                   <div className="flex items-center gap-1.5">
-                    <input
-                      type="color"
-                      value={effectiveColor}
-                      onChange={(e) => updateDraft(i, { color: e.target.value })}
-                      className="w-9 h-9 rounded-lg cursor-pointer border border-slate-200 bg-transparent p-0.5"
-                      aria-label="颜色"
-                    />
-                    <span className="font-mono text-[10px] text-slate-400 w-16">{effectiveColor}</span>
-                    {!d.color && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-violet-500 font-medium">
-                        <Sparkles className="w-3 h-3" />
-                        自动
-                      </span>
+                    {customColorIdx === i ? (
+                      <>
+                        <input
+                          type="color"
+                          value={effectiveColor}
+                          onChange={(e) => updateDraft(i, { color: e.target.value })}
+                          onBlur={() => setCustomColorIdx(null)}
+                          className="w-9 h-9 rounded-lg cursor-pointer border border-slate-200 bg-transparent p-0.5"
+                          aria-label="自定义颜色"
+                        />
+                        <span className="font-mono text-[10px] text-slate-400 w-16">{effectiveColor}</span>
+                        {d.color && (
+                          <button
+                            onClick={() => {
+                              updateDraft(i, { color: '' });
+                              setCustomColorIdx(null);
+                            }}
+                            className="text-[10px] text-violet-500 hover:underline shrink-0"
+                          >
+                            恢复自动
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => setCustomColorIdx(i)}
+                        title="颜色随序列与级别自动生成；点击可自定义"
+                        className="flex items-center gap-1.5 px-1.5 h-9 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                      >
+                        <span
+                          className="w-6 h-6 rounded-md border border-black/10 shrink-0"
+                          style={{ backgroundColor: effectiveColor }}
+                        />
+                        <span className="font-mono text-[10px] text-slate-400">{effectiveColor}</span>
+                        {!d.color && (
+                          <span className="flex items-center gap-0.5 text-[10px] text-violet-500 font-medium">
+                            <Sparkles className="w-3 h-3" />
+                            自动
+                          </span>
+                        )}
+                      </button>
                     )}
                   </div>
                   <button

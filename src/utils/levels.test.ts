@@ -48,13 +48,38 @@ describe('validateLevelCode / validateLevelNumber', () => {
   });
 });
 
-describe('autoColor', () => {
-  it('同一 fullCode 稳定返回同一颜色，且出自 12 色调色板', () => {
+describe('autoColor（v2.0.12 语义化：序列色系 + 级别深浅）', () => {
+  const luminance = (hex: string): number => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  };
+
+  it('同一 fullCode 稳定返回同一颜色，且为合法 HEX', () => {
     const c1 = autoColor('L1.1');
-    const c2 = autoColor('L1.1');
-    expect(c1).toBe(c2);
+    expect(c1).toBe(autoColor('L1.1'));
     expect(c1).toMatch(/^#[0-9A-Fa-f]{6}$/);
     expect(autoColor('E3.1')).toMatch(/^#[0-9A-Fa-f]{6}$/);
+  });
+
+  it('不同序列不同色系（L=indigo 系、E=emerald 系互相区分）', () => {
+    expect(autoColor('L1.1')).not.toBe(autoColor('E1.1'));
+    // L 系列偏蓝紫（b 分量占优），E 系列偏绿（g 分量占优）
+    const lRgb = autoColor('L1.1').slice(1);
+    const eRgb = autoColor('E1.1').slice(1);
+    expect(parseInt(lRgb.slice(4, 6), 16)).toBeGreaterThan(parseInt(lRgb.slice(2, 4), 16));
+    expect(parseInt(eRgb.slice(2, 4), 16)).toBeGreaterThan(parseInt(eRgb.slice(4, 6), 16));
+  });
+
+  it('同序列内编号越大颜色越深（L1.1 亮于 L3.2）', () => {
+    expect(luminance(autoColor('L1.1'))).toBeGreaterThan(luminance(autoColor('L3.2')));
+    expect(luminance(autoColor('L0'))).toBeGreaterThan(luminance(autoColor('L1.1')));
+  });
+
+  it('未知序列也能获得稳定颜色（MD 系列确定性分配）', () => {
+    expect(autoColor('MD2.5')).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    expect(autoColor('MD2.5')).toBe(autoColor('MD2.5'));
   });
 });
 
@@ -104,7 +129,7 @@ describe('validateLevel', () => {
 
 describe('getLevelColor / getLevelLabel', () => {
   it('按职级码取颜色与标签，未知码返回兜底', () => {
-    expect(getLevelColor(DEFAULT_LEVELS, 'L1.1')).toBe('#FFCC99');
+    expect(getLevelColor(DEFAULT_LEVELS, 'L1.1')).toBe(autoColor('L1.1')); // v2.0.12 语义化默认色
     expect(getLevelColor(DEFAULT_LEVELS, 'ZZ9')).toBe('#CCCCCC');
     expect(getLevelLabel(DEFAULT_LEVELS, 'L1.1')).toBe('L1.1-初级专员');
     expect(getLevelLabel(DEFAULT_LEVELS, 'ZZ9')).toBe('ZZ9');
