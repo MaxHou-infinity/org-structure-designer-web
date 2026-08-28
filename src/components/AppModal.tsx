@@ -1,10 +1,15 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 /**
  * 通用应用内 Modal 基础组件（v2.1.1）：
  * 遮罩 + 玻璃面板 + 头部（标题/关闭）+ 正文 + 可选底部操作区，Esc / 遮罩点击关闭。
  * 供「目标职级」「新建岗位」等弹窗复用，替换原生 window.prompt。
+ *
+ * 关键：用 createPortal 渲染到 document.body —— 本组件可能被渲染在画布卡片内，
+ * 而画布是 transform:scale 坐标系；若不用 portal，position:fixed 会以 transform 祖先为参照
+ * （而非视口），导致弹窗偏移/被卡片遮盖/闪屏。portal 到 body 后 fixed 相对视口、z-110 置顶。
  */
 export function AppModal({
   open,
@@ -34,7 +39,7 @@ export function AppModal({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fadeIn" onClick={onClose} />
       <div
@@ -58,6 +63,7 @@ export function AppModal({
           <div className="shrink-0 px-6 py-3 border-t border-slate-100 flex items-center justify-end gap-2">{footer}</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
