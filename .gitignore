@@ -42,3 +42,10 @@ src-tauri/gen/schemas
 
 # 内部需求文档（不公开，勿提交到 GitHub）
 docs/v300-requirements.md
+
+# v2.1.1 内部路线图文档（本地归档，不公开、勿提交到 GitHub）
+docs/v211-roadmap.md
+docs/v211-product-scope.md
+docs/v211-hr-value.md
+docs/v211-dev-data-architecture.md
+docs/v211-ai-data-analyzability.md
