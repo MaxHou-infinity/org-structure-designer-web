@@ -154,13 +154,20 @@ const CARD_COLLAPSED_LIST_H = 32; // 收起态「已收起 · 展开查看全部
 const CARD_EMP_ROW_H = 46; // employee-tag py-1 8 + 姓名行 18 + gap-0.5 2 + 职级行 18
 const CARD_EMP_GAP = 4; // space-y-1
 const CARD_HEIGHT_SAFETY = 4; // 吸收字体/行高渲染差异
+// —— v2.1.1 岗位区（PositionSection）高度常量：岗位区恒渲染（每卡「岗位 (N) [+新建]」+ 岗位行） ——
+const CARD_POS_HEADER_H = 26; // 「岗位 (N) [+ 新建]」头行
+const CARD_POS_EMPTY_H = 20; // 暂无岗位，点「新建」添加
+const CARD_POS_ROW_H = 66; // 单岗位行（名/编制/在岗 +/- 套岗（选员工）+建虚拟兼岗 两行）
+const CARD_POS_GAP = 4; // space-y-1
+const CARD_POS_PAD = 16; // 岗位区 px-3 pb-2（上下）
 
 /**
  * 估算某部门卡片的实际高度（100% 缩放基准）。
- * - 收起态（默认）：成员区只显示一行「已收起」摘要 → 卡高固定紧凑；
- * - 展开态：所有成员平铺（无滚动、无上限）。
- * 布局（层间步进）与引导线（父卡底缘）都必须用「每个节点自己的高度」，
- * 否则父卡变高会向下遮挡子部门卡（v2.0.10 回归修复依赖此函数）。
+ * - 收起态（默认）：成员区只显示一行「已收起」摘要 → 卡高紧凑；
+ * - 展开态：所有成员平铺（无滚动、无上限）；
+ * - v2.1.1：额外计入「岗位区」高度（每卡恒渲染，含一个或多个岗位行），
+ *   否则卡高被低估 → 子部门被排得过近、层级上下挤在一起（用户反馈 v2.1.1）。
+ * 布局（层间步进）与引导线（父卡底缘）都必须用「每个节点自己的高度」。
  */
 export function estimateCardHeight(dept: Department, membersExpanded: boolean = false): number {
   const n = dept.employees.length;
@@ -170,12 +177,18 @@ export function estimateCardHeight(dept: Department, membersExpanded: boolean = 
       : membersExpanded
         ? n * CARD_EMP_ROW_H + (n - 1) * CARD_EMP_GAP
         : CARD_COLLAPSED_LIST_H;
+  const pn = dept.positions?.length ?? 0;
+  const posH =
+    pn === 0
+      ? CARD_POS_PAD + CARD_POS_HEADER_H + CARD_POS_EMPTY_H
+      : CARD_POS_PAD + CARD_POS_HEADER_H + pn * CARD_POS_ROW_H + (pn - 1) * CARD_POS_GAP;
   return (
     CARD_HEADER_H +
     CARD_LEADER_H +
     CARD_MEMBERS_PAD +
     CARD_MEMBERS_LABEL_H +
     listH +
+    posH +
     CARD_HEIGHT_SAFETY
   );
 }
