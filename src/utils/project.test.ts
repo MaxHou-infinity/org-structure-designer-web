@@ -271,6 +271,7 @@ describe('v2.0.9 .orgproj 往返一致守卫', () => {
           parentId: undefined,
           expanded: true,
           headcount: 5,
+          positions: [],
           children: [{
             id: 'd2',
             name: '研发组',
@@ -280,6 +281,7 @@ describe('v2.0.9 .orgproj 往返一致守卫', () => {
             parentId: 'd1',
             expanded: true,
             headcount: 3,
+            positions: [],
             children: [],
             employees: [
               { id: 'e1', name: '员工一', employeeId: 'E001', level: 'L1.1', title: '工程师', cost: 2.5 },
@@ -299,6 +301,7 @@ describe('v2.0.9 .orgproj 往返一致守卫', () => {
         ],
         levelConfigs: [{ code: 'L', number: '1.1', label: '初级', color: '#FFCC99', cost: 2 }],
         canvas: { zoom: 120, lastFocusedDeptId: 'd1' },
+        positions: [],
       }],
       meta: { createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', version: PROJECT_VERSION },
     };

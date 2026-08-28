@@ -16,6 +16,15 @@ export interface Employee {
   targetLevel?: string;
   /** 岗位/职位名称（可选；画布显示用，录入为空时落 'NA'）。 */
   title?: string;
+  // —— v2.1.1 岗位化 ——
+  /** 主岗外键 → Position.id；未套岗 = undefined */
+  positionId?: string;
+  /** 主岗/兼岗（缺省 primary） */
+  assignmentType?: 'primary' | 'secondary';
+  /** 兼岗虚拟记录回指真人员工 id */
+  primaryEmployeeId?: string;
+  /** 汇报线/直接上级（外键 → Employee.id 或 employeeId） */
+  reportsToEmployeeId?: string;
 }
 
 export interface Department {
@@ -28,9 +37,39 @@ export interface Department {
   children: Department[];
   employees: Employee[];
   expanded: boolean;
-  /** 部门编制人数（可空；用于健康度 L3「编制 vs 实际 vs 缺口」与空岗率）。 */
+  /** 部门编制人数（冗余派生字段，= 部门直属岗位编制之和；向下兼容）。 */
   headcount?: number;
+  // —— v2.1.1 岗位化 ——
+  /** 本部门直属岗位（嵌套镜像，画布向下钻用；旧版文件缺省为空数组） */
+  positions?: Position[];
+  /** 负责人类型（缺省视为 'owner' 兼容旧数据） */
+  leaderType?: LeaderType;
 }
+
+/** —— v2.1.1 岗位化 —— */
+
+/** 岗位状态：active 正常 / frozen 编制冻结（headcount 不计待补缺口）/ archived 软删除 */
+export type PositionStatus = 'active' | 'frozen' | 'archived';
+
+/** 岗位（编制名额的载体）：岗位 = 工作定义，编制 = 岗位的计数属性，员工 = 实际占用。 */
+export interface Position {
+  id: string;                // 稳定 uuid（uid('pos')），AI 可引用
+  departmentId: string;      // 显式外键 → Department.id
+  name: string;              // 岗位名称（如「前端工程师」）
+  jobFamily?: string;        // 岗位序列（技术/产品/设计/职能/管理/销售/运营）
+  levelBandMin?: string;     // 职级带宽下限（fullCode，如 'L1'）
+  levelBandMax?: string;     // 职级带宽上限（fullCode，如 'L3.2'）
+  headcount: number;         // 编制名额（>=0；frozen 时不计缺口）
+  status: PositionStatus;
+  createdAt: string;         // 时态/审计
+  updatedAt: string;
+}
+
+/** 负责人类型：owner 正职 / deputy 副职 / acting 代理 / external 外部挂名 / vacant 空缺 */
+export type LeaderType = 'owner' | 'deputy' | 'acting' | 'external' | 'vacant';
+
+/** 人岗匹配状态：进图 / 未进图（未套岗）/ 超编 / 不胜任（仅预留，v2.2.0 判定） */
+export type MatchStatus = 'placed' | 'unassigned' | 'overstaffed' | 'not_competent';
 
 export interface OrgTemplate {
   dept1?: string;
@@ -90,6 +129,8 @@ export interface Scenario {
   levelConfigs: LevelConfig[];
   /** 画布状态 */
   canvas: ScenarioCanvas;
+  /** v2.1.1：全量岗位扁平列表（所有部门岗位的镜像，作 analytics/AI/反查用；旧版文件缺省为空数组） */
+  positions?: Position[];
 }
 
 /** 项目 / .orgproj 文件的元信息 */

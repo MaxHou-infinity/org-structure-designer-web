@@ -4,6 +4,7 @@ import {
   LevelConfig,
   Employee,
   Department,
+  Position,
   ScenarioCanvas,
 } from '../types';
 import { DEFAULT_LEVELS } from './levels';
@@ -17,8 +18,8 @@ import { DEFAULT_LEVELS } from './levels';
  * - 浏览器版持久化到 localStorage（自动保存），Tauri 版可另存为 .orgproj。
  */
 
-/** 数据模型版本（用于迁移）。 */
-export const PROJECT_VERSION = 1;
+/** 数据模型版本（用于迁移）。v2.1.1 升为 2：引入岗位（Position）实体。 */
+export const PROJECT_VERSION = 2;
 
 /** localStorage key */
 export const PROJECT_STORAGE_KEY = 'org-designer.project.v2';
@@ -26,8 +27,8 @@ export const PROJECT_STORAGE_KEY = 'org-designer.project.v2';
 /** 默认场景名 */
 export const DEFAULT_SCENARIO_NAME = '基线';
 
-/** 生成一个短 id */
-function uid(prefix: string): string {
+/** 生成一个稳定唯一 id（前缀 + 时间戳 + 随机）。供岗位/员工/部门等实体用。 */
+export function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -121,6 +122,8 @@ function sanitizeDepartments(list: unknown[]): Department[] {
   for (const item of list) {
     if (!isDepartmentLike(item)) continue;
     const children = Array.isArray(item.children) ? sanitizeDepartments(item.children) : [];
+    const now = new Date().toISOString();
+    const leaderType = isLeaderType(item.leaderType) ? item.leaderType : undefined;
     out.push({
       id: item.id,
       name: item.name,
@@ -137,6 +140,36 @@ function sanitizeDepartments(list: unknown[]): Department[] {
         typeof item.headcount === 'number' && Number.isFinite(item.headcount)
           ? item.headcount
           : undefined,
+      // —— v2.1.1 岗位化 ——
+      positions: Array.isArray(item.positions) ? sanitizePositions(item.positions, now) : [],
+      ...(leaderType !== undefined ? { leaderType } : {}),
+    });
+  }
+  return out;
+}
+
+function isLeaderType(v: unknown): v is import('../types').LeaderType {
+  return v === 'owner' || v === 'deputy' || v === 'acting' || v === 'external' || v === 'vacant';
+}
+
+function sanitizePositions(list: unknown[], now: string): Position[] {
+  const out: Position[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const p = item as Record<string, unknown>;
+    if (typeof p.id !== 'string' || typeof p.name !== 'string') continue;
+    const status = p.status === 'active' || p.status === 'frozen' || p.status === 'archived' ? p.status : 'active';
+    out.push({
+      id: p.id,
+      departmentId: typeof p.departmentId === 'string' ? p.departmentId : '',
+      name: p.name,
+      jobFamily: typeof p.jobFamily === 'string' ? p.jobFamily : undefined,
+      levelBandMin: typeof p.levelBandMin === 'string' ? p.levelBandMin : undefined,
+      levelBandMax: typeof p.levelBandMax === 'string' ? p.levelBandMax : undefined,
+      headcount: typeof p.headcount === 'number' && Number.isFinite(p.headcount) ? p.headcount : 0,
+      status,
+      createdAt: typeof p.createdAt === 'string' ? p.createdAt : now,
+      updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : now,
     });
   }
   return out;
@@ -187,11 +220,98 @@ function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario
     allEmployeesFlat,
     levelConfigs,
     canvas,
+    positions: Array.isArray(raw.positions) ? sanitizePositions(raw.positions, now) : [],
   };
+}
+
+/** —— v2.1.1：显式迁移链（.orgproj 数据模型版本升级）—— */
+
+type Migration = (data: Record<string, unknown>) => Record<string, unknown>;
+
+const MIGRATIONS: Record<number, Migration> = {
+  // v1 → v2：引入岗位。旧部门级 headcount>0 派生「默认岗位」，部门内非虚拟员工自动套岗；
+  // dept.headcount 保留为冗余派生（= 部门直属岗位编制之和），保证报告/诊断数字与迁移前一致。
+  1: (data) => migrateV1ToV2(data),
+};
+
+/** 将任意版本数据迁移到当前 PROJECT_VERSION（只读输入，返回 v2 结构；未知版本交由 sanitize 尽力处理）。 */
+function migrateToCurrent(data: Record<string, unknown>): Record<string, unknown> {
+  let v = typeof data.version === 'number' ? data.version : 1;
+  let out = data;
+  while (v < PROJECT_VERSION) {
+    const fn = MIGRATIONS[v];
+    if (!fn) break;
+    out = fn(out);
+    out.version = v + 1;
+    v += 1;
+  }
+  return out;
+}
+
+function migrateV1ToV2(data: Record<string, unknown>): Record<string, unknown> {
+  const now = new Date().toISOString();
+  const scenarios = Array.isArray(data.scenarios) ? data.scenarios : [];
+  for (const sRaw of scenarios) {
+    const s = sRaw as Record<string, unknown>;
+    const depts = Array.isArray(s.departments) ? s.departments : [];
+    const allPositions: Record<string, unknown>[] = [];
+    migrateDepts(depts, allPositions, now);
+    s.positions = allPositions;
+  }
+  return data;
+}
+
+function migrateDepts(depts: unknown[], allPositions: Record<string, unknown>[], now: string): void {
+  for (const dRaw of depts) {
+    const d = dRaw as Record<string, unknown>;
+    const positions = Array.isArray(d.positions) ? (d.positions as Record<string, unknown>[]) : [];
+    const hc =
+      typeof d.headcount === 'number' && Number.isFinite(d.headcount) && d.headcount > 0
+        ? d.headcount
+        : null;
+
+    let defaultPosId: string | null = null;
+    if (hc != null) {
+      if (positions.length === 0) {
+        // 首次迁移：派生「默认岗位」，编制数 = 旧 headcount（数字不变）
+        defaultPosId = uid('pos');
+        const pos: Record<string, unknown> = {
+          id: defaultPosId,
+          departmentId: d.id,
+          name: '默认岗位',
+          headcount: hc,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        };
+        positions.push(pos);
+        allPositions.push(pos);
+      } else {
+        // 二次迁移（幂等）：已有岗位则套岗到第一个 active 岗位，不重复建岗
+        const firstActive = positions.find((p) => p.status === 'active') ?? positions[0];
+        defaultPosId = (firstActive?.id as string) ?? null;
+      }
+    }
+
+    // 部门内非虚拟员工：无 positionId → 套岗到默认岗位（幂等：已有则不覆盖）
+    const emps = Array.isArray(d.employees) ? d.employees : [];
+    for (const eRaw of emps) {
+      const e = eRaw as Record<string, unknown>;
+      if (e.isVirtual) continue;
+      if (e.positionId == null && defaultPosId) {
+        e.positionId = defaultPosId;
+      }
+    }
+
+    d.positions = positions;
+    const children = Array.isArray(d.children) ? d.children : [];
+    migrateDepts(children, allPositions, now);
+  }
 }
 
 /**
  * 解析 + 迁移 .orgproj JSON 字符串。
+ * 先跑迁移链（v1→v2：岗位派生 + 员工套岗），再做 sanitize（归一化 + 校验）。
  * @returns 合法 ProjectFile；解析失败或结构非法返回 null。
  */
 export function parseProject(raw: string): ProjectFile | null {
@@ -202,7 +322,8 @@ export function parseProject(raw: string): ProjectFile | null {
     return null;
   }
   if (!data || typeof data !== 'object') return null;
-  const p = data as Record<string, unknown>;
+  const migratedRaw = migrateToCurrent(data as Record<string, unknown>);
+  const p = migratedRaw;
 
   const now = new Date().toISOString();
   const scenariosRaw = Array.isArray(p.scenarios) ? p.scenarios : [];
