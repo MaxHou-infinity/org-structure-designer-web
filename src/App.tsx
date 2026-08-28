@@ -10,6 +10,7 @@ import { DiagnosticReport } from './components/DiagnosticReport';
 import { ScenarioDiffView } from './components/ScenarioDiffView';
 import { ManagementReport } from './components/ManagementReport';
 import { SearchModal } from './components/SearchModal';
+import { PositionOpsModal } from './components/PositionOpsModal';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
 import { computeUnassignedEmployees } from './utils/analytics';
@@ -144,6 +145,8 @@ export default function App() {
   const [searchHighlight, setSearchHighlight] = useState<SearchHighlight>(EMPTY_HIGHLIGHT);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [unassignedOpen, setUnassignedOpen] = useState(false);
+  // v2.1.1：岗位操作弹窗（顶部菜单「岗位」入口）
+  const [positionOpsOpen, setPositionOpsOpen] = useState(false);
   // v2.0.3 修复：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构
   const [orgTemplates, setOrgTemplates] = useState<OrgTemplate[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -979,6 +982,7 @@ export default function App() {
         onZoomOut={handleZoomOut}
         onOpenSearch={() => setSearchOpen(true)}
         onLoadIndustryTemplate={handleLoadIndustryTemplate}
+        onOpenPositionOps={() => setPositionOpsOpen(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1028,11 +1032,8 @@ export default function App() {
             onSetTargetLevel={handleSetTargetLevel}
             positionSummaries={positionSummaries}
             matchStates={matchStates}
-            onCreatePosition={handleCreatePosition}
             onSetPositionHeadcount={handleSetPositionHeadcount}
-            onAssignEmployeeToPosition={handleAssignEmployeeToPosition}
             onRemoveAssignment={handleRemoveAssignment}
-            onCreateVirtualForPosition={handleCreateVirtualForPosition}
           />
         </main>
       </div>
@@ -1156,6 +1157,19 @@ export default function App() {
         onClose={dismissOnboarding}
         onDownloadTemplate={handleDownloadEmployeeTemplate}
         onLoadTemplate={handleLoadIndustryTemplate}
+      />
+
+      <PositionOpsModal
+        open={positionOpsOpen}
+        onClose={() => setPositionOpsOpen(false)}
+        departments={departments}
+        allEmployees={allEmployeesFlat}
+        levelConfigs={levelConfigs}
+        positionSummaries={positionSummaries}
+        onCreatePosition={handleCreatePosition}
+        onSetPositionHeadcount={handleSetPositionHeadcount}
+        onAssignEmployeeToPosition={handleAssignEmployeeToPosition}
+        onCreateVirtualForPosition={handleCreateVirtualForPosition}
       />
     </div>
   );

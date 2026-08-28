@@ -1,11 +1,28 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate, GitCompare } from 'lucide-react';
+import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate, GitCompare, Briefcase } from 'lucide-react';
 import { Scenario } from '../types';
+import { OrgTemplate } from '../types';
 import { SaveState } from '../utils/useOrgWorkspace';
 import { ScenarioSwitcher } from './ScenarioSwitcher';
 import { INDUSTRY_TEMPLATES } from '../utils/industryTemplates';
 import { APP_VERSION } from '../version';
-import { TemplatePreviewModal } from './TemplatePreviewModal';
+
+/** 从行业模板的 orgTemplate 提取「一级部门 → 二级部门」结构，供悬停图例渲染。 */
+function templateLegend(orgs: Pick<OrgTemplate, 'dept1' | 'dept2' | 'deptLevel' | 'leaderName'>[]) {
+  const map = new Map<string, { name: string; level: number; leaderName?: string; children: string[] }>();
+  for (const o of orgs) {
+    const l1 = o.dept1;
+    const l2 = o.dept2;
+    if (!l1) continue;
+    let entry = map.get(l1);
+    if (!entry) {
+      entry = { name: l1, level: Number(o.deptLevel) || 1, leaderName: o.leaderName, children: [] };
+      map.set(l1, entry);
+    }
+    if (l2 && !entry.children.includes(l2)) entry.children.push(l2);
+  }
+  return Array.from(map.values());
+}
 
 interface TopBarProps {
   projectName: string;
@@ -36,6 +53,8 @@ interface TopBarProps {
   onZoomOut: () => void;
   onOpenSearch: () => void;
   onLoadIndustryTemplate: (id: string) => void;
+  /** v2.1.1：打开「岗位操作」弹窗（新建/套岗/建虚拟兼岗） */
+  onOpenPositionOps: () => void;
 }
 
 function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastSavedAt: string | null }) {
@@ -79,10 +98,11 @@ export function TopBar({
   onZoomOut,
   onOpenSearch,
   onLoadIndustryTemplate,
+  onOpenPositionOps,
 }: TopBarProps) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [hoverTemplateId, setHoverTemplateId] = useState<string | null>(null);
   const toolsRef = useRef<HTMLDivElement>(null);
   const templatesRef = useRef<HTMLDivElement>(null);
 
@@ -193,42 +213,75 @@ export function TopBar({
             <ChevronDown className={`w-4 h-4 transition-transform ${templatesOpen ? 'rotate-180' : ''}`} />
           </button>
           {templatesOpen && (
-            <div className="absolute right-0 top-full mt-2 w-72 rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp">
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-400">
-                一键载入示例组织
-              </div>
-              {INDUSTRY_TEMPLATES.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    setTemplatesOpen(false);
-                    onLoadIndustryTemplate(t.id);
-                  }}
-                  className="w-full flex items-start gap-3 px-3 py-2.5 rounded-xl hover:bg-indigo-50 transition-colors text-left"
-                >
-                  <span
-                    className="w-9 h-9 rounded-lg grid place-items-center shrink-0 text-white"
-                    style={{ backgroundColor: t.accent }}
+            <div className="absolute right-0 top-full mt-2 w-[560px] rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp flex gap-2">
+              <div className="flex-1">
+                <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-400">
+                  一键载入示例组织（移到模板看右侧图例）
+                </div>
+                {INDUSTRY_TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setTemplatesOpen(false);
+                      setHoverTemplateId(null);
+                      onLoadIndustryTemplate(t.id);
+                    }}
+                    onMouseEnter={() => setHoverTemplateId(t.id)}
+                    className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors text-left ${
+                      hoverTemplateId === t.id ? 'bg-indigo-50' : 'hover:bg-indigo-50'
+                    }`}
                   >
-                    <LayoutTemplate className="w-4 h-4" />
-                  </span>
-                  <span>
-                    <span className="block text-sm font-semibold text-slate-800">{t.name}</span>
-                    <span className="block text-xs text-slate-400 mt-0.5 leading-snug">{t.description}</span>
-                  </span>
-                </button>
-              ))}
+                    <span
+                      className="w-9 h-9 rounded-lg grid place-items-center shrink-0 text-white"
+                      style={{ backgroundColor: t.accent }}
+                    >
+                      <LayoutTemplate className="w-4 h-4" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-800">{t.name}</span>
+                      <span className="block text-xs text-slate-400 mt-0.5 leading-snug">{t.description}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {/* 悬停图例 */}
+              <div className="w-56 shrink-0 rounded-xl border border-slate-100 bg-slate-50/60 p-3 overflow-y-auto max-h-80">
+                {(() => {
+                  const t = INDUSTRY_TEMPLATES.find((x) => x.id === hoverTemplateId);
+                  if (!t) return <div className="text-[11px] text-slate-400">将光标移到左侧模板查看组织结构图例</div>;
+                  const levels = templateLegend(t.orgTemplates);
+                  return (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">组织结构图例</div>
+                      <div className="space-y-1">
+                        {levels.map((lv) => (
+                          <div key={lv.name}>
+                            <div className={`text-[12px] font-medium ${lv.level === 1 ? 'text-indigo-600' : 'text-slate-600'} pl-${lv.level === 1 ? '0' : '3'}`}>
+                              {lv.level === 1 ? '┌ ' : '└ '}{lv.name}
+                              {lv.leaderName && <span className="text-[10px] text-slate-400"> · {lv.leaderName}</span>}
+                            </div>
+                            {lv.children.map((c) => (
+                              <div key={c} className="text-[11px] text-slate-500 pl-5">└ {c}</div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           )}
         </div>
 
         <button
-          onClick={() => setPreviewOpen(true)}
-          className="hidden xl:flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors"
-          title="预览行业模板"
+          onClick={onOpenPositionOps}
+          disabled={!hasData}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="岗位操作：新建岗位 / 套岗 / 建虚拟兼岗"
         >
-          <LayoutTemplate className="w-4 h-4" />
-          预览
+          <Briefcase className="w-4 h-4" />
+          岗位
         </button>
       </div>
 
@@ -315,12 +368,6 @@ export function TopBar({
         </button>
       </div>
     </header>
-
-    <TemplatePreviewModal
-      open={previewOpen}
-      onClose={() => setPreviewOpen(false)}
-      onLoadTemplate={onLoadIndustryTemplate}
-    />
     </>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Plus, Briefcase } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Briefcase } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee, MatchStatus } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
@@ -10,7 +10,6 @@ import { PositionSummary } from '../utils/analytics';
 import { MatchResult } from '../utils/match';
 import { useDisplaySettings } from '../utils/displaySettings';
 import { TargetLevelModal } from './TargetLevelModal';
-import { PositionModal, type PositionCreateFields } from './PositionModal';
 
 interface DepartmentCardProps {
   department: Department;
@@ -32,14 +31,11 @@ interface DepartmentCardProps {
   membersExpanded?: boolean;
   /** v2.0.11：切换成员列表展开/收起 */
   onToggleMembers?: (deptId: string) => void;
-  // —— v2.1.1 岗位化 ——
+  // —— v2.1.1 岗位化（卡片为纯展示；新建/套岗/兼岗走顶部「岗位」入口）——
   positionSummaries?: PositionSummary[];
   matchStates?: MatchResult[];
-  onCreatePosition?: (deptId: string, fields: PositionCreateFields) => void;
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
-  onAssignEmployeeToPosition?: (empId: string, positionId: string) => void;
   onRemoveAssignment?: (empId: string) => void;
-  onCreateVirtualForPosition?: (deptId: string, positionId: string, empId: string) => void;
 }
 
 /** 套岗状态点（placed/unassigned/overstaffed；not_competent 仅预留不产出）。 */
@@ -50,27 +46,17 @@ const MATCH_DOT: Record<MatchStatus, { dot: string; text: string; label: string;
   not_competent: { dot: 'bg-slate-400', text: 'text-slate-500', label: '不胜任', title: '不胜任（预留）' },
 };
 
-/** 岗位卡「岗位」区（可折叠，v2.1.1）：展示本部门直属岗位 + 编制/在岗/缺口 + 套岗入口。 */
+/** 岗位卡「岗位」区（v2.1.1，纯展示）：展示本部门直属岗位 + 编制/在岗/缺口。
+ *  新建/套岗/建虚拟兼岗操作用户从顶部菜单「岗位」入口进入（已从卡片解耦）。 */
 function PositionSection({
   dept,
   summaryById,
-  allEmployees,
-  onOpenPositionModal,
   onSetPositionHeadcount,
-  onAssign,
-  onCreateVirtual,
 }: {
   dept: Department;
   summaryById: Map<string, PositionSummary>;
-  allEmployees: Employee[];
-  onOpenPositionModal?: () => void;
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
-  onAssign?: (empId: string, positionId: string) => void;
-  onCreateVirtual?: (deptId: string, positionId: string, empId: string) => void;
 }) {
-  const [openAssignPos, setOpenAssignPos] = useState<string | null>(null);
-  const [openVirtualPos, setOpenVirtualPos] = useState<string | null>(null);
-
   const positions = dept.positions ?? [];
   const total = positions.length;
 
@@ -81,18 +67,10 @@ function PositionSection({
           <Briefcase className="w-3 h-3 shrink-0" />
           岗位 ({total})
         </span>
-        <button
-          onClick={() => onOpenPositionModal?.()}
-          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-          title="新建岗位"
-        >
-          <Plus className="w-3 h-3" />
-          新建
-        </button>
       </div>
 
       {positions.length === 0 ? (
-        <div className="text-[11px] text-slate-400 text-center py-1.5">暂无岗位，点「新建」添加</div>
+        <div className="text-[11px] text-slate-400 text-center py-1.5">暂无岗位（顶部「岗位」可新建）</div>
       ) : (
         <div className="space-y-1">
           {positions.map((pos) => {
@@ -100,7 +78,6 @@ function PositionSection({
             const frozen = pos.status === 'frozen';
             const assignedCount = s?.assignedCount ?? 0;
             const gap = s?.gap ?? null;
-            const candidates = allEmployees.filter((e) => !e.isVirtual && e.positionId !== pos.id);
             return (
               <div key={pos.id} className="rounded-lg border border-slate-100 bg-white/60 p-1.5">
                 <div className="flex items-center gap-1">
@@ -120,7 +97,7 @@ function PositionSection({
                         const v = e.target.value === '' ? 0 : Number(e.target.value);
                         onSetPositionHeadcount?.(dept.id, pos.id, Number.isFinite(v) ? v : 0);
                       }}
-                      title="岗位编制"
+                      title="岗位编制（改后回车生效）"
                       className="w-11 px-1 py-0.5 rounded border border-slate-200 text-right text-xs focus-ring"
                     />
                     <span className="text-[10px] text-slate-400">/ 在岗 {assignedCount}</span>
@@ -129,55 +106,6 @@ function PositionSection({
                     </span>
                   </span>
                 </div>
-                <div className="mt-1 flex items-center gap-1">
-                  <button
-                    onClick={() => setOpenAssignPos(openAssignPos === pos.id ? null : pos.id)}
-                    className="flex-1 text-left px-2 py-1 rounded-md text-[11px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                  >
-                    套岗（选员工）
-                  </button>
-                  <button
-                    onClick={() => setOpenVirtualPos(openVirtualPos === pos.id ? null : pos.id)}
-                    className="flex-1 text-left px-2 py-1 rounded-md text-[11px] text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors"
-                  >
-                    建虚拟兼岗
-                  </button>
-                </div>
-                {openAssignPos === pos.id && (
-                  <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-indigo-100 bg-white py-0.5">
-                    {candidates.length === 0 && <div className="px-2 py-1 text-[11px] text-slate-400">无可套岗员工</div>}
-                    {candidates.map((e) => (
-                      <button
-                        key={e.id}
-                        onClick={() => {
-                          onAssign?.(e.id, pos.id);
-                          setOpenAssignPos(null);
-                        }}
-                        className="w-full text-left px-2 py-1 text-[11px] text-slate-700 hover:bg-indigo-50 truncate"
-                      >
-                        {e.name}（{e.employeeId}）
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {openVirtualPos === pos.id && (
-                  <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-blue-100 bg-white py-0.5">
-                    <div className="px-2 py-1 text-[10px] text-slate-400">从以下员工创建兼岗（跨部门第二角色）</div>
-                    {candidates.length === 0 && <div className="px-2 py-1 text-[11px] text-slate-400">无可兼岗员工</div>}
-                    {candidates.map((e) => (
-                      <button
-                        key={e.id}
-                        onClick={() => {
-                          onCreateVirtual?.(dept.id, pos.id, e.id);
-                          setOpenVirtualPos(null);
-                        }}
-                        className="w-full text-left px-2 py-1 text-[11px] text-slate-700 hover:bg-blue-50 truncate"
-                      >
-                        {e.name}（{e.employeeId}）
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -451,11 +379,8 @@ export function DepartmentCard({
   onToggleMembers,
   positionSummaries = [],
   matchStates = [],
-  onCreatePosition,
   onSetPositionHeadcount,
-  onAssignEmployeeToPosition,
   onRemoveAssignment,
-  onCreateVirtualForPosition,
 }: DepartmentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(department.name);
@@ -485,7 +410,6 @@ export function DepartmentCard({
 
   // —— v2.1.1 应用内弹窗（替代原生 window.prompt）：目标职级 / 新建岗位 ——
   const [targetLevelEmp, setTargetLevelEmp] = useState<Employee | null>(null);
-  const [positionModalOpen, setPositionModalOpen] = useState(false);
   
   // 部门拖拽
   const { attributes: deptAttributes, listeners: deptListeners, setNodeRef: setDeptRef, isDragging: isDeptDragging } = useDraggable({
@@ -493,7 +417,7 @@ export function DepartmentCard({
     data: { type: 'department', department },
     // v2.1.1：本卡打开「新建岗位/目标职级」弹窗时禁用拖拽 —— 否则弹窗内原生 <select>
     // 交互的指针移动会被 dnd-kit PointerSensor 误判为对卡的拖拽（用户反馈）。
-    disabled: positionModalOpen || !!targetLevelEmp,
+    disabled: !!targetLevelEmp,
   });
   
   const { setNodeRef, isOver } = useDroppable({
@@ -685,17 +609,13 @@ export function DepartmentCard({
       </div>
       
       {/* v2.1.1 岗位区（可折叠，沿组织树向下钻：每部门展示其直属岗位） */}
-      {(department.positions?.length ?? 0) > 0 || onCreatePosition ? (
+      {(department.positions?.length ?? 0) > 0 && (
         <PositionSection
           dept={department}
           summaryById={summaryById}
-          allEmployees={allEmployees}
-          onOpenPositionModal={() => setPositionModalOpen(true)}
           onSetPositionHeadcount={onSetPositionHeadcount}
-          onAssign={(empId, positionId) => onAssignEmployeeToPosition?.(empId, positionId)}
-          onCreateVirtual={(deptId, positionId, empId) => onCreateVirtualForPosition?.(deptId, positionId, empId)}
         />
-      ) : null}
+      )}
 
       {/* 员工列表（v2.0.11：收起/展开全部，替代 max-h-40 滚动；成员多时卡高由布局动态估算） */}
       <div className="px-3 py-2">
@@ -830,13 +750,6 @@ export function DepartmentCard({
           levelConfigs={levelConfigs}
           onConfirm={(empId, target) => onSetTargetLevel(empId, target ?? '')}
           onClose={() => setTargetLevelEmp(null)}
-        />
-        <PositionModal
-          open={positionModalOpen}
-          onClose={() => setPositionModalOpen(false)}
-          dept={department}
-          levelConfigs={levelConfigs}
-          onCreate={(deptId, fields) => onCreatePosition?.(deptId, fields)}
         />
     </div>
   );

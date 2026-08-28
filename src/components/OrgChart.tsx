@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
-import type { PositionCreateFields } from './PositionModal';
 import { Department, Employee } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
 import { employeeDeptMap } from '../utils/search';
@@ -37,11 +36,8 @@ interface OrgChartProps {
   positionSummaries?: PositionSummary[];
   /** 人岗匹配状态（computeMatchStates 输出，供员工标签状态点） */
   matchStates?: MatchResult[];
-  onCreatePosition?: (deptId: string, fields: PositionCreateFields) => void;
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
-  onAssignEmployeeToPosition?: (empId: string, positionId: string) => void;
   onRemoveAssignment?: (empId: string) => void;
-  onCreateVirtualForPosition?: (deptId: string, positionId: string, empId: string) => void;
 }
 
 interface TreeNode {
@@ -271,11 +267,8 @@ const renderTreeRecursive = (
   onToggleMemberExpanded: (deptId: string) => void,
   positionSummaries: PositionSummary[],
   matchStates: MatchResult[],
-  onCreatePosition: (deptId: string, fields: PositionCreateFields) => void,
   onSetPositionHeadcount: (deptId: string, positionId: string, headcount: number) => void,
-  onAssignEmployeeToPosition: (empId: string, positionId: string) => void,
   onRemoveAssignment: (empId: string) => void,
-  onCreateVirtualForPosition: (deptId: string, positionId: string, empId: string) => void,
 ): React.ReactNode => {
   // 扁平化所有节点，全部相对 canvasRef 绝对定位（全局坐标）
   const flat = flattenTreeNodes(nodes);
@@ -307,11 +300,8 @@ const renderTreeRecursive = (
             onToggleMembers={() => onToggleMemberExpanded(node.department.id)}
             positionSummaries={positionSummaries}
             matchStates={matchStates}
-            onCreatePosition={onCreatePosition}
             onSetPositionHeadcount={onSetPositionHeadcount}
-            onAssignEmployeeToPosition={onAssignEmployeeToPosition}
             onRemoveAssignment={onRemoveAssignment}
-            onCreateVirtualForPosition={onCreateVirtualForPosition}
           />
         </div>
       ))}
@@ -421,11 +411,8 @@ export function OrgChart({
   searchHighlight,
   positionSummaries = [],
   matchStates = [],
-  onCreatePosition,
   onSetPositionHeadcount,
-  onAssignEmployeeToPosition,
   onRemoveAssignment,
-  onCreateVirtualForPosition,
 }: OrgChartProps) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [dragData, setDragData] = useState<{ type: 'employee' | 'department'; data: Employee | Department } | null>(null);
@@ -865,11 +852,8 @@ export function OrgChart({
               toggleMemberExpanded,
               positionSummaries,
               matchStates,
-              onCreatePosition ?? (() => {}),
               onSetPositionHeadcount ?? (() => {}),
-              onAssignEmployeeToPosition ?? (() => {}),
               onRemoveAssignment ?? (() => {}),
-              onCreateVirtualForPosition ?? (() => {}),
             )}
           </div>
         ) : (
