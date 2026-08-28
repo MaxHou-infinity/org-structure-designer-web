@@ -1,0 +1,63 @@
+import { useEffect } from 'react';
+import { X } from 'lucide-react';
+
+/**
+ * 通用应用内 Modal 基础组件（v2.1.1）：
+ * 遮罩 + 玻璃面板 + 头部（标题/关闭）+ 正文 + 可选底部操作区，Esc / 遮罩点击关闭。
+ * 供「目标职级」「新建岗位」等弹窗复用，替换原生 window.prompt。
+ */
+export function AppModal({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  maxWidth = 'max-w-lg',
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  maxWidth?: string;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fadeIn" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={`relative w-full ${maxWidth} max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp`}
+      >
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+            aria-label="关闭"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {subtitle && <div className="shrink-0 px-6 pt-3 -mt-1 text-xs text-slate-400">{subtitle}</div>}
+        <div className="flex-1 px-6 py-4 overflow-y-auto min-h-0">{children}</div>
+        {footer && (
+          <div className="shrink-0 px-6 py-3 border-t border-slate-100 flex items-center justify-end gap-2">{footer}</div>
+        )}
+      </div>
+    </div>
+  );
+}

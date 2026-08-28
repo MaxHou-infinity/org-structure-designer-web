@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Plus, Briefcase, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Plus, Briefcase } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee, MatchStatus } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
@@ -9,6 +9,8 @@ import { employeeLevelGap } from '../utils/analytics';
 import { PositionSummary } from '../utils/analytics';
 import { MatchResult } from '../utils/match';
 import { useDisplaySettings } from '../utils/displaySettings';
+import { TargetLevelModal } from './TargetLevelModal';
+import { PositionModal, type PositionCreateFields } from './PositionModal';
 
 interface DepartmentCardProps {
   department: Department;
@@ -33,7 +35,7 @@ interface DepartmentCardProps {
   // —— v2.1.1 岗位化 ——
   positionSummaries?: PositionSummary[];
   matchStates?: MatchResult[];
-  onCreatePosition?: (deptId: string, name: string) => void;
+  onCreatePosition?: (deptId: string, fields: PositionCreateFields) => void;
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
   onAssignEmployeeToPosition?: (empId: string, positionId: string) => void;
   onRemoveAssignment?: (empId: string) => void;
@@ -53,7 +55,7 @@ function PositionSection({
   dept,
   summaryById,
   allEmployees,
-  onCreatePosition,
+  onOpenPositionModal,
   onSetPositionHeadcount,
   onAssign,
   onCreateVirtual,
@@ -61,25 +63,16 @@ function PositionSection({
   dept: Department;
   summaryById: Map<string, PositionSummary>;
   allEmployees: Employee[];
-  onCreatePosition?: (deptId: string, name: string) => void;
+  onOpenPositionModal?: () => void;
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
   onAssign?: (empId: string, positionId: string) => void;
   onCreateVirtual?: (deptId: string, positionId: string, empId: string) => void;
 }) {
   const [openAssignPos, setOpenAssignPos] = useState<string | null>(null);
   const [openVirtualPos, setOpenVirtualPos] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
 
   const positions = dept.positions ?? [];
   const total = positions.length;
-
-  const addPosition = () => {
-    if (!newName.trim()) return;
-    onCreatePosition?.(dept.id, newName.trim());
-    setNewName('');
-    setCreating(false);
-  };
 
   return (
     <div className="px-3 pb-2 border-b border-slate-100">
@@ -89,7 +82,7 @@ function PositionSection({
           岗位 ({total})
         </span>
         <button
-          onClick={() => setCreating((v) => !v)}
+          onClick={() => onOpenPositionModal?.()}
           className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
           title="新建岗位"
         >
@@ -97,29 +90,6 @@ function PositionSection({
           新建
         </button>
       </div>
-
-      {creating && (
-        <div className="mb-1.5 flex items-center gap-1">
-          <input
-            autoFocus
-            type="text"
-            value={newName}
-            placeholder="岗位名称"
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') addPosition();
-              if (e.key === 'Escape') setCreating(false);
-            }}
-            className="flex-1 min-w-0 px-2 py-1 border border-indigo-300 rounded-lg text-xs focus-ring"
-          />
-          <button onClick={addPosition} className="px-2 py-1 rounded-lg text-xs text-white bg-indigo-500 hover:bg-indigo-600">
-            添加
-          </button>
-          <button onClick={() => setCreating(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
 
       {positions.length === 0 ? (
         <div className="text-[11px] text-slate-400 text-center py-1.5">暂无岗位，点「新建」添加</div>
@@ -329,7 +299,6 @@ function EmployeeList({
   canDelete,
   selectedEmpIds,
   onSelect,
-  onSetTargetLevel,
   onCreateVirtual,
   onMoveMultiple,
   departments,
@@ -337,13 +306,13 @@ function EmployeeList({
   matchStateById,
   getEmpName,
   onRemoveAssignment,
+  onOpenTargetLevel,
 }: { 
   employees: Employee[];
   onDelete: (empId: string) => void;
   canDelete: boolean;
   selectedEmpIds?: Set<string>;
   onSelect?: (empId: string, additive: boolean) => void;
-  onSetTargetLevel?: (empId: string, target: string) => void;
   onCreateVirtual?: (empId: string) => void;
   onMoveMultiple?: (empIds: string[], toDeptId: string) => void;
   departments: Department[];
@@ -351,6 +320,7 @@ function EmployeeList({
   matchStateById?: Map<string, MatchResult>;
   getEmpName?: (id: string) => string;
   onRemoveAssignment?: (empId: string) => void;
+  onOpenTargetLevel?: (emp: Employee) => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; empId: string } | null>(null);
   const [showMove, setShowMove] = useState(false);
@@ -427,9 +397,7 @@ function EmployeeList({
                 <button
                   className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap"
                   onClick={() => {
-                    const t = window.prompt('输入目标职级（如 L2.1，留空清除）', emp.targetLevel ?? '');
-                    if (t === null) return;
-                    onSetTargetLevel?.(emp.id, t);
+                    onOpenTargetLevel?.(emp);
                     setContextMenu(null);
                   }}
                 >
@@ -514,6 +482,10 @@ export function DepartmentCard({
     [matchStates],
   );
   const getEmpName = useCallback((id: string) => allEmployees.find((e) => e.id === id)?.name ?? '', [allEmployees]);
+
+  // —— v2.1.1 应用内弹窗（替代原生 window.prompt）：目标职级 / 新建岗位 ——
+  const [targetLevelEmp, setTargetLevelEmp] = useState<Employee | null>(null);
+  const [positionModalOpen, setPositionModalOpen] = useState(false);
   
   // 部门拖拽
   const { attributes: deptAttributes, listeners: deptListeners, setNodeRef: setDeptRef, isDragging: isDeptDragging } = useDraggable({
@@ -715,7 +687,7 @@ export function DepartmentCard({
           dept={department}
           summaryById={summaryById}
           allEmployees={allEmployees}
-          onCreatePosition={onCreatePosition}
+          onOpenPositionModal={() => setPositionModalOpen(true)}
           onSetPositionHeadcount={onSetPositionHeadcount}
           onAssign={(empId, positionId) => onAssignEmployeeToPosition?.(empId, positionId)}
           onCreateVirtual={(deptId, positionId, empId) => onCreateVirtualForPosition?.(deptId, positionId, empId)}
@@ -759,7 +731,6 @@ export function DepartmentCard({
               canDelete={true}
               selectedEmpIds={selectedEmpIds}
               onSelect={onToggleSelectEmp}
-              onSetTargetLevel={onSetTargetLevel}
               onCreateVirtual={(empId) => onCreateVirtualFromEmployee(department.id, empId)}
               onMoveMultiple={onMoveMultiple}
               departments={allDepartments}
@@ -767,6 +738,7 @@ export function DepartmentCard({
               matchStateById={matchById}
               getEmpName={getEmpName}
               onRemoveAssignment={(empId) => onRemoveAssignment?.(empId)}
+              onOpenTargetLevel={(emp) => setTargetLevelEmp(emp)}
             />
           </div>
         ) : (
@@ -847,6 +819,22 @@ export function DepartmentCard({
           </div>,
           document.body,
         )}
+
+        {/* v2.1.1 应用内弹窗：目标职级 / 新建岗位（替代原生 window.prompt） */}
+        <TargetLevelModal
+          open={!!targetLevelEmp}
+          employee={targetLevelEmp}
+          levelConfigs={levelConfigs}
+          onConfirm={(empId, target) => onSetTargetLevel(empId, target ?? '')}
+          onClose={() => setTargetLevelEmp(null)}
+        />
+        <PositionModal
+          open={positionModalOpen}
+          onClose={() => setPositionModalOpen(false)}
+          dept={department}
+          levelConfigs={levelConfigs}
+          onCreate={(deptId, fields) => onCreatePosition?.(deptId, fields)}
+        />
     </div>
   );
 }

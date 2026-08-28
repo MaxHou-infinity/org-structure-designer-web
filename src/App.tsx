@@ -391,17 +391,20 @@ export default function App() {
 
   /** —— v2.1.1 岗位 CRUD / 套岗 —— */
 
-  /** 新建岗位（挂在某部门直属岗位列表）。 */
+  /** 新建岗位（挂在某部门直属岗位列表）。v2.1.1 起接受富字段（名称/序列/职级带宽/编制数）。 */
   const handleCreatePosition = useCallback(
-    (deptId: string, name: string) => {
-      const trimmed = name.trim();
+    (deptId: string, fields: { name: string; jobFamily?: string; levelBandMin?: string; levelBandMax?: string; headcount?: number }) => {
+      const trimmed = fields.name.trim();
       if (!trimmed) return;
       const now = new Date().toISOString();
       const pos: Position = {
         id: uid('pos'),
         departmentId: deptId,
         name: trimmed,
-        headcount: 0,
+        jobFamily: fields.jobFamily,
+        levelBandMin: fields.levelBandMin,
+        levelBandMax: fields.levelBandMax,
+        headcount: typeof fields.headcount === 'number' && Number.isFinite(fields.headcount) ? fields.headcount : 0,
         status: 'active',
         createdAt: now,
         updatedAt: now,

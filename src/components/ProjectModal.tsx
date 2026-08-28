@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { X, FileDown, FileUp, Plus, Copy, Trash2, Check, FolderOpen, Pencil } from 'lucide-react';
 import { ProjectFile } from '../types';
 
@@ -39,6 +39,9 @@ export function ProjectModal({
   onExport,
 }: ProjectModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // v2.1.1：场景内联重命名（替代原生 window.prompt）
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   if (!open) return null;
 
@@ -116,7 +119,29 @@ export function ProjectModal({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
                       {s.id === currentScenarioId && <Check className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
-                      <span className="truncate">{s.name}</span>
+                      {renameId === s.id ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              if (renameValue.trim()) onRenameScenario(s.id, renameValue.trim());
+                              setRenameId(null);
+                            } else if (e.key === 'Escape') {
+                              setRenameId(null);
+                            }
+                          }}
+                          onBlur={() => {
+                            if (renameValue.trim()) onRenameScenario(s.id, renameValue.trim());
+                            setRenameId(null);
+                          }}
+                          className="w-full min-w-0 px-1.5 py-0.5 border border-indigo-300 rounded text-sm focus-ring"
+                        />
+                      ) : (
+                        <span className="truncate">{s.name}</span>
+                      )}
                     </div>
                     <div className="text-[10px] text-slate-400">
                       {s.departments.length} 个部门 · {s.allEmployeesFlat.length} 名员工 · {fmtTime(s.updatedAt)}
@@ -134,8 +159,8 @@ export function ProjectModal({
                     )}
                     <button
                       onClick={() => {
-                        const name = window.prompt('重命名场景', s.name);
-                        if (name && name.trim()) onRenameScenario(s.id, name);
+                        setRenameId(s.id);
+                        setRenameValue(s.name);
                       }}
                       className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
                       title="重命名"

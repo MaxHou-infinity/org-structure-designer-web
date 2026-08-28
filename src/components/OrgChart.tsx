@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
+import type { PositionCreateFields } from './PositionModal';
 import { Department, Employee } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
 import { employeeDeptMap } from '../utils/search';
@@ -36,7 +37,7 @@ interface OrgChartProps {
   positionSummaries?: PositionSummary[];
   /** 人岗匹配状态（computeMatchStates 输出，供员工标签状态点） */
   matchStates?: MatchResult[];
-  onCreatePosition?: (deptId: string, name: string) => void;
+  onCreatePosition?: (deptId: string, fields: PositionCreateFields) => void;
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
   onAssignEmployeeToPosition?: (empId: string, positionId: string) => void;
   onRemoveAssignment?: (empId: string) => void;
@@ -257,7 +258,7 @@ const renderTreeRecursive = (
   onToggleMemberExpanded: (deptId: string) => void,
   positionSummaries: PositionSummary[],
   matchStates: MatchResult[],
-  onCreatePosition: (deptId: string, name: string) => void,
+  onCreatePosition: (deptId: string, fields: PositionCreateFields) => void,
   onSetPositionHeadcount: (deptId: string, positionId: string, headcount: number) => void,
   onAssignEmployeeToPosition: (empId: string, positionId: string) => void,
   onRemoveAssignment: (empId: string) => void,
