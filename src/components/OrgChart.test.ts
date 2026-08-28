@@ -49,8 +49,8 @@ describe('calculateTreeLayout（方案A 绝对定位布局）', () => {
     }
   });
 
-  it('上级卡高增长 → 子部门整体下移且不被遮挡（回归 v2.0.9 遮挡 bug）', () => {
-    // 上级部门直挂 6 名员工（成员列表触发 max-h-40 滚动上限，卡高 ≈ 286）
+  it('上级卡高增长 → 子部门整体下移且不被遮挡（回归 v2.0.9 遮挡 bug；v2.0.11 收起/展开两态）', () => {
+    // 上级部门直挂 6 名员工
     const emps: Employee[] = Array.from({ length: 6 }, (_, i) => ({
       id: `e${i}`,
       name: `员工${i}`,
@@ -76,14 +76,37 @@ describe('calculateTreeLayout（方案A 绝对定位布局）', () => {
       expanded: true,
       headcount: undefined,
     };
-    const h = estimateCardHeight(parent);
-    expect(h).toBeGreaterThan(200); // 高于旧固定 200 步进假设，正是旧版遮挡根因
-    const nodes = calculateTreeLayout([parent], 0, 0, 100);
-    const p = nodes[0];
-    expect(p.children).toHaveLength(1);
-    const c = p.children[0];
-    expect(c.y).toBe(p.y + h + 40); // 子卡顶 = 父卡底（估算）+ 40 间距
-    expect(c.y).toBeGreaterThan(p.y + h - 1); // 子卡顶不低于父卡估算底缘 → 不重叠
+
+    // 收起态（默认）：紧凑卡高，子部门 = 父y + 估算高 + 40
+    const collapsedH = estimateCardHeight(parent, false);
+    const nodesCollapsed = calculateTreeLayout([parent], 0, 0, 100, new Set());
+    const pCollapsed = nodesCollapsed[0];
+    expect(pCollapsed.children[0].y).toBe(pCollapsed.y + collapsedH + 40);
+    expect(collapsedH).toBeLessThan(200); // 收起态比旧固定 200 更紧凑
+
+    // 展开态：全部成员平铺（无滚动上限），卡高 > 200（正是旧版漏掉的“高卡”情形）
+    const expandedH = estimateCardHeight(parent, true);
+    const nodesExpanded = calculateTreeLayout([parent], 0, 0, 100, new Set(['parent']));
+    const pExpanded = nodesExpanded[0];
+    expect(expandedH).toBeGreaterThan(200); // 高于旧固定 200 步进假设，正是旧版遮挡根因
+    expect(pExpanded.children[0].y).toBe(pExpanded.y + expandedH + 40); // 子卡顶 = 父卡底（估算）+ 40 间距
+    expect(pExpanded.children[0].y).toBeGreaterThan(pExpanded.y + expandedH - 1); // 不重叠
+  });
+
+  it('成员列表展开/收起 → 子部门位置随卡高变化（v2.0.11）', () => {
+    const emps: Employee[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `e${i}`, name: `员工${i}`, employeeId: `E${i}`, level: 'L1.1',
+    }));
+    const child: Department = {
+      id: 'c', name: '子', level: 2, parentId: 'p', children: [], employees: [], expanded: true,
+    };
+    const parent: Department = {
+      id: 'p', name: '父', level: 1, children: [child], employees: emps, expanded: true,
+    };
+    const collapsedY = calculateTreeLayout([parent], 0, 0, 100, new Set())[0].children[0].y;
+    const expandedY = calculateTreeLayout([parent], 0, 0, 100, new Set(['p']))[0].children[0].y;
+    expect(expandedY).toBeGreaterThan(collapsedY); // 展开时子部门下移
+    expect(expandedY - collapsedY).toBe(5 * 46 + 4 * 4 - 32); // 差值 = 全行数高 − 收起单行高
   });
 
   it('空部门（0 成员）子部门间距 = 估算高度 + 40（最小卡高不挤压子卡）', () => {

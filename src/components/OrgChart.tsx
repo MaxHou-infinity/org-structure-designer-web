@@ -67,11 +67,14 @@ export function countLeaves(dept: Department): number {
  *
  * 坐标以 100% 缩放基准计算（卡宽=220、层级步进=240），实际缩放由外层 transform:scale 完成。
  */
+const EMPTY_ID_SET: ReadonlySet<string> = new Set();
+
 export function calculateTreeLayout(
   departments: Department[],
   parentX: number,
   parentY: number,
   zoom: number,
+  membersExpandedIds: ReadonlySet<string> = EMPTY_ID_SET,
 ): TreeNode[] {
   if (departments.length === 0) return [];
 
@@ -96,8 +99,9 @@ export function calculateTreeLayout(
       let children: TreeNode[] = [];
       if (isExpandedParent) {
         // 子部门占用父部门的整个宽度带，从带的左缘开始排布 → 父卡片中心恰好落在子部门块中点
-        // 垂直步进按父部门「实际估算高度」计算（v2.0.10 修复：父卡随成员数变高时子卡整体下移，不被遮挡）
-        const step = estimateCardHeight(dept) * (zoom / 100) + verticalGap;
+        // 垂直步进按父部门「当前状态（收起/展开成员列表）下的估算高度」计算：
+        // 父卡变高时子卡整体下移，不被遮挡（v2.0.10 修复；v2.0.11 支持动态展开态）
+        const step = estimateCardHeight(dept, membersExpandedIds.has(dept.id)) * (zoom / 100) + verticalGap;
         children = layoutRow(dept.children, cursor, y + step);
       }
 
@@ -133,18 +137,26 @@ const CARD_LEADER_H = 38; // 负责人 px-3 py-2（8*2 + 内容 20 + border 1 + 
 const CARD_MEMBERS_PAD = 16; // 成员区 px-3 py-2（8*2）
 const CARD_MEMBERS_LABEL_H = 24; // 「成员 (N)」text-xs 16 + mb-2 8
 const CARD_EMPTY_LIST_H = 34; // 空态「拖拽员工到这里」py-2 16 + 文本 16 + 余量
+const CARD_COLLAPSED_LIST_H = 32; // 收起态「已收起 · 展开查看全部 N 人」单行（v2.0.11）
 const CARD_EMP_ROW_H = 46; // employee-tag py-1 8 + 姓名行 18 + gap-0.5 2 + 职级行 18
 const CARD_EMP_GAP = 4; // space-y-1
-const CARD_MEMBERS_MAX_H = 160; // max-h-40（超过则滚动，不再增长）
 const CARD_HEIGHT_SAFETY = 4; // 吸收字体/行高渲染差异
 
-/** 估算某部门卡片的实际高度（100% 缩放基准；含成员列表滚动上限）。 */
-export function estimateCardHeight(dept: Department): number {
+/**
+ * 估算某部门卡片的实际高度（100% 缩放基准）。
+ * - 收起态（默认）：成员区只显示一行「已收起」摘要 → 卡高固定紧凑；
+ * - 展开态：所有成员平铺（无滚动、无上限）。
+ * 布局（层间步进）与引导线（父卡底缘）都必须用「每个节点自己的高度」，
+ * 否则父卡变高会向下遮挡子部门卡（v2.0.10 回归修复依赖此函数）。
+ */
+export function estimateCardHeight(dept: Department, membersExpanded: boolean = false): number {
   const n = dept.employees.length;
   const listH =
     n === 0
       ? CARD_EMPTY_LIST_H
-      : Math.min(n * CARD_EMP_ROW_H + (n - 1) * CARD_EMP_GAP, CARD_MEMBERS_MAX_H);
+      : membersExpanded
+        ? n * CARD_EMP_ROW_H + (n - 1) * CARD_EMP_GAP
+        : CARD_COLLAPSED_LIST_H;
   return (
     CARD_HEADER_H +
     CARD_LEADER_H +
@@ -163,13 +175,14 @@ export function estimateCardHeight(dept: Department): number {
 function computeConnectors(
   nodes: TreeNode[],
   cardWidth: number,
+  membersExpandedIds: ReadonlySet<string> = EMPTY_ID_SET,
 ): string[] {
   const paths: string[] = [];
   const walk = (list: TreeNode[]) => {
     for (const n of list) {
       if (n.children.length > 0) {
         const parentCx = n.x + cardWidth / 2;
-        const parentBottom = n.y + estimateCardHeight(n.department);
+        const parentBottom = n.y + estimateCardHeight(n.department, membersExpandedIds.has(n.department.id));
         const firstChild = n.children[0];
         const lastChild = n.children[n.children.length - 1];
         const busY = parentBottom + (firstChild.y - parentBottom) / 2; // 父底与子顶的中点
@@ -228,6 +241,8 @@ const renderTreeRecursive = (
   allEmployees: Employee[],
   selectedEmpIds: Set<string>,
   onToggleSelectEmp: (empId: string, additive: boolean) => void,
+  membersExpandedIds: ReadonlySet<string>,
+  onToggleMemberExpanded: (deptId: string) => void,
 ): React.ReactNode => {
   // 扁平化所有节点，全部相对 canvasRef 绝对定位（全局坐标）
   const flat = flattenTreeNodes(nodes);
@@ -255,6 +270,8 @@ const renderTreeRecursive = (
             allEmployees={allEmployees}
             selectedEmpIds={selectedEmpIds}
             onToggleSelectEmp={onToggleSelectEmp}
+            membersExpanded={membersExpandedIds.has(node.department.id)}
+            onToggleMembers={() => onToggleMemberExpanded(node.department.id)}
           />
         </div>
       ))}
@@ -262,12 +279,15 @@ const renderTreeRecursive = (
   );
 };
 
-/** 计算布局总高度：所有节点的最大底缘（y + 该节点估算高度） */
-function computeLayoutHeight(nodes: TreeNode[]): number {
+/** 计算布局总高度：所有节点的最大底缘（y + 该节点当前状态下估算高度） */
+function computeLayoutHeight(
+  nodes: TreeNode[],
+  membersExpandedIds: ReadonlySet<string> = EMPTY_ID_SET,
+): number {
   let maxBottom = 0;
   const walk = (list: TreeNode[]) => {
     for (const n of list) {
-      maxBottom = Math.max(maxBottom, n.y + estimateCardHeight(n.department));
+      maxBottom = Math.max(maxBottom, n.y + estimateCardHeight(n.department, membersExpandedIds.has(n.department.id)));
       walk(n.children);
     }
   };
@@ -378,6 +398,17 @@ export function OrgChart({
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const selectedSet = useMemo(() => new Set(selectedEmpIds), [selectedEmpIds]);
+
+  // —— 部门成员列表「展开全部/收起」状态（v2.0.11：内存级，不持久化、不新增数据模型字段）——
+  const [memberExpandedIds, setMemberExpandedIds] = useState<Set<string>>(() => new Set());
+  const toggleMemberExpanded = useCallback((deptId: string) => {
+    setMemberExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(deptId)) next.delete(deptId);
+      else next.add(deptId);
+      return next;
+    });
+  }, []);
 
   // —— 空白区拖拽平移画布（按住向上下左右拖改变视口位置）——
   const dragPanRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
@@ -695,9 +726,9 @@ export function OrgChart({
   
   // 布局按 100% 基准计算，缩放由外层 transform: scale 完成
   const scale = zoom / 100;
-  const treeNodes = calculateTreeLayout(departments, 0, 0, 100);
+  const treeNodes = calculateTreeLayout(departments, 0, 0, 100, memberExpandedIds);
   // 方案 A：布局宽度/高度都由坐标树计算（与绝对定位坐标一致，而非累加根 width）
-  const layoutHeight = computeLayoutHeight(treeNodes);
+  const layoutHeight = computeLayoutHeight(treeNodes, memberExpandedIds);
   // 遍历所有节点取 max(x + width)，确保 wrapper 包住最右的部门（含子部门）
   const layoutWidth = (() => {
     let maxRight = 0;
@@ -745,7 +776,7 @@ export function OrgChart({
           >
             {/* 引导线层：父→子连接线，绝对定位铺满画布，位于卡片下方（先渲染） */}
             {(() => {
-              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH);
+              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH, memberExpandedIds);
               if (connectorPaths.length === 0) return null;
               return (
                 <svg
@@ -782,7 +813,9 @@ export function OrgChart({
               departments,
               allEmployees,
               selectedSet,
-              handleToggleSelectEmp
+              handleToggleSelectEmp,
+              memberExpandedIds,
+              toggleMemberExpanded
             )}
           </div>
         ) : (

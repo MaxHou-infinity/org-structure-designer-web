@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, User, Users, Building2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2 } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
@@ -24,6 +24,10 @@ interface DepartmentCardProps {
   onSetTargetLevel: (empId: string, target: string) => void;
   onMoveMultiple: (empIds: string[], toDeptId: string) => void;
   allDepartments: Department[];
+  /** v2.0.11：成员列表是否「展开全部」；缺省 false = 收起（紧凑卡，不滚动） */
+  membersExpanded?: boolean;
+  /** v2.0.11：切换成员列表展开/收起 */
+  onToggleMembers?: (deptId: string) => void;
 }
 
 function DraggableEmployee({ 
@@ -254,6 +258,8 @@ export function DepartmentCard({
   allEmployees,
   selectedEmpIds,
   onToggleSelectEmp,
+  membersExpanded = false,
+  onToggleMembers,
 }: DepartmentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(department.name);
@@ -464,14 +470,37 @@ export function DepartmentCard({
         )}
       </div>
       
-      {/* 员工列表 */}
+      {/* 员工列表（v2.0.11：收起/展开全部，替代 max-h-40 滚动；成员多时卡高由布局动态估算） */}
       <div className="px-3 py-2">
-        <div className="flex items-center gap-1 text-xs text-gray-500 mb-2">
-          <Users className="w-3 h-3" />
-          <span>成员 ({department.employees.length})</span>
+        <div className="flex items-center justify-between gap-1 text-xs text-gray-500 mb-2">
+          <div className="flex items-center gap-1 min-w-0">
+            <Users className="w-3 h-3 shrink-0" />
+            <span className="truncate">成员 ({department.employees.length})</span>
+          </div>
+          {department.employees.length > 0 && onToggleMembers && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleMembers(department.id);
+              }}
+              className={`shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium hover:bg-indigo-50 ${
+                membersExpanded ? 'text-indigo-600' : 'text-slate-400 hover:text-indigo-600'
+              }`}
+              title={membersExpanded ? '收起成员列表' : '展开全部成员'}
+            >
+              {membersExpanded ? '收起' : '展开全部'}
+              {membersExpanded ? (
+                <ChevronUp className="w-3 h-3" />
+              ) : (
+                <ChevronDown className="w-3 h-3" />
+              )}
+            </button>
+          )}
         </div>
-        <div className="space-y-1 max-h-40 overflow-y-auto">
-          {department.employees.length > 0 ? (
+        {department.employees.length === 0 ? (
+          <div className="text-xs text-gray-400 text-center py-2">拖拽员工到这里</div>
+        ) : membersExpanded ? (
+          <div className="space-y-1">
             <EmployeeList
               employees={department.employees}
               onDelete={(empId) => onDeleteEmployee(department.id, empId)}
@@ -484,12 +513,19 @@ export function DepartmentCard({
               departments={allDepartments}
               currentDeptId={department.id}
             />
-          ) : (
-            <div className="text-xs text-gray-400 text-center py-2">
-              拖拽员工到这里
-            </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMembers?.(department.id);
+            }}
+            className="w-full text-xs text-slate-400 hover:text-indigo-600 text-center py-1.5 rounded-md hover:bg-indigo-50/60 transition-colors"
+            title="展开全部成员"
+          >
+            已收起 · 共 {department.employees.length} 人，点此展开查看全部
+          </button>
+        )}
       </div>
       
       {/* 右键菜单 - portal 到 document.body，避免被画布 transform:scale 的坐标系污染。
