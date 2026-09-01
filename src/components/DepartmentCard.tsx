@@ -10,6 +10,8 @@ import { PositionSummary } from '../utils/analytics';
 import { MatchResult } from '../utils/match';
 import { useDisplaySettings } from '../utils/displaySettings';
 import { TargetLevelModal } from './TargetLevelModal';
+import { COMPETENCY_STYLE, COMPETENCY_LABEL, CompetencyStatus, fmt } from '../utils/statusUI';
+import type { CompetencySummary } from '../utils/competency';
 
 interface DepartmentCardProps {
   department: Department;
@@ -36,14 +38,21 @@ interface DepartmentCardProps {
   matchStates?: MatchResult[];
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
   onRemoveAssignment?: (empId: string) => void;
+  // —— v2.2.0 胜任度三信号 ——
+  /** 胜任度汇总（computeCompetencyStates 输出，key = Employee.id；缺省 = 全员「未评」灰环，不隐藏） */
+  competencySummaries?: Map<string, CompetencySummary>;
+  /** 点击员工标签胜任度环（或右键「查看胜任度」）→ 打开胜任度详情 */
+  onOpenCompetencyDetail?: (empId: string) => void;
 }
 
-/** 套岗状态点（placed/unassigned/overstaffed；not_competent 仅预留不产出）。 */
+/** 套岗状态点（placed/unassigned/overstaffed/not_competent）。
+ *  v2.2.0：not_competent 由胜任度红灯派生为真实状态 → 灰 → 红空心环
+ *  （border-red-400 + bg-red-50 空心，与 overstaffed 红实心点区分，design §8.2 = visual §3.5）。 */
 const MATCH_DOT: Record<MatchStatus, { dot: string; text: string; label: string; title: string }> = {
   placed: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: '已套岗', title: '已套岗位' },
   unassigned: { dot: 'bg-amber-500', text: 'text-amber-600', label: '未套岗', title: '未套岗位' },
   overstaffed: { dot: 'bg-red-500', text: 'text-red-600', label: '超编', title: '岗位超编' },
-  not_competent: { dot: 'bg-slate-400', text: 'text-slate-500', label: '不胜任', title: '不胜任（预留）' },
+  not_competent: { dot: 'bg-red-50 border border-red-400', text: 'text-red-700', label: '不胜任', title: '不胜任（胜任度低于要求，已确认）' },
 };
 
 /** 岗位卡「岗位」区（v2.1.1，纯展示）：展示本部门直属岗位 + 编制/在岗/缺口。
@@ -121,12 +130,16 @@ function DraggableEmployee({
   onSelect,
   matchStatus,
   getEmpName,
+  competencySummaries,
+  onOpenCompetencyDetail,
 }: { 
   employee: Employee;
   selected?: boolean;
   onSelect?: (empId: string, additive: boolean) => void;
   matchStatus?: MatchStatus;
   getEmpName?: (id: string) => string;
+  competencySummaries?: Map<string, CompetencySummary>;
+  onOpenCompetencyDetail?: (empId: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: employee.id,
@@ -140,6 +153,15 @@ function DraggableEmployee({
   const { showLevel, showTitle } = useDisplaySettings();
   const match = matchStatus ? MATCH_DOT[matchStatus] : null;
   const primaryName = employee.isVirtual && employee.primaryEmployeeId ? getEmpName?.(employee.primaryEmployeeId) : null;
+
+  // —— v2.2.0 胜任度环（三信号同框：左匹配点实心 / 右胜任度环空心 / 右职级差距 +N，能力在前、职级在后）——
+  // 未评 = 中性灰空心环 + 「未评」，显式呈现、绝不隐藏（隐藏 = 黑盒，ux §2.1）。
+  const competencySummary = competencySummaries?.get(employee.id);
+  const competencyStatus: CompetencyStatus = competencySummary?.overall ? competencySummary.overall.status : 'unrated';
+  const competencyScore = competencySummary?.overall ? fmt(competencySummary.overall.score) : '—';
+  // 阈值 = 加权要求分：overall.gap = Σ(requirement×权重) − score（仅展示，不判灯），故 requirement = score + gap。
+  const competencyThreshold = competencySummary?.overall ? fmt(competencySummary.overall.score + competencySummary.overall.gap) : '—';
+  const competencyStyle = COMPETENCY_STYLE[competencyStatus];
   
   return (
     <div
@@ -163,11 +185,33 @@ function DraggableEmployee({
         <User className="w-3 h-3" style={{ color: levelColor }} />
         {match && (
           <span
-            className={`w-2 h-2 rounded-full shrink-0 ${match.dot}`}
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${match.dot}`}
             title={`${match.label} · ${match.title}`}
           />
         )}
         <span className="truncate">{employee.name}</span>
+        {/* 胜任度环（空心环 + 图标；点击 → 胜任度详情；onPointerDown 阻断拖拽起点，避免与 dnd 冲突） */}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenCompetencyDetail?.(employee.id);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              e.stopPropagation();
+              onOpenCompetencyDetail?.(employee.id);
+            }
+          }}
+          className={`inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border-2 text-[9px] font-bold leading-none shrink-0 cursor-pointer ${competencyStyle.ring} ${competencyStyle.text}`}
+          title={`胜任度 · ${COMPETENCY_LABEL[competencyStatus]} · 综合 ${competencyScore} · 阈值 ${competencyThreshold}`}
+          aria-label={`胜任度：${COMPETENCY_LABEL[competencyStatus]}`}
+        >
+          {competencyStyle.glyph}
+        </span>
         {(() => {
           const gap = employeeLevelGap(employee);
           if (!gap) return null;
@@ -235,6 +279,8 @@ function EmployeeList({
   getEmpName,
   onRemoveAssignment,
   onOpenTargetLevel,
+  competencySummaries,
+  onOpenCompetencyDetail,
 }: { 
   employees: Employee[];
   onDelete: (empId: string) => void;
@@ -249,6 +295,8 @@ function EmployeeList({
   getEmpName?: (id: string) => string;
   onRemoveAssignment?: (empId: string) => void;
   onOpenTargetLevel?: (emp: Employee) => void;
+  competencySummaries?: Map<string, CompetencySummary>;
+  onOpenCompetencyDetail?: (empId: string) => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; empId: string } | null>(null);
   const [showMove, setShowMove] = useState(false);
@@ -276,7 +324,7 @@ function EmployeeList({
           key={emp.id}
           onContextMenu={(e) => handleContextMenu(e, emp.id)}
         >
-          <DraggableEmployee employee={emp} selected={selectedEmpIds?.has(emp.id)} onSelect={onSelect} matchStatus={matchStateById?.get(emp.id)?.status} getEmpName={getEmpName} />
+          <DraggableEmployee employee={emp} selected={selectedEmpIds?.has(emp.id)} onSelect={onSelect} matchStatus={matchStateById?.get(emp.id)?.status} getEmpName={getEmpName} competencySummaries={competencySummaries} onOpenCompetencyDetail={onOpenCompetencyDetail} />
           {contextMenu?.empId === emp.id && (
             createPortal(
               <div
@@ -331,6 +379,17 @@ function EmployeeList({
                 >
                   设置目标职级
                 </button>
+                {onOpenCompetencyDetail && (
+                  <button
+                    className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap"
+                    onClick={() => {
+                      onOpenCompetencyDetail(emp.id);
+                      setContextMenu(null);
+                    }}
+                  >
+                    查看胜任度
+                  </button>
+                )}
                 {emp.positionId && (
                   <button
                     className="w-full px-4 py-1.5 text-left text-sm hover:bg-gray-100 text-slate-700 truncate whitespace-nowrap"
@@ -381,6 +440,8 @@ export function DepartmentCard({
   matchStates = [],
   onSetPositionHeadcount,
   onRemoveAssignment,
+  competencySummaries,
+  onOpenCompetencyDetail,
 }: DepartmentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(department.name);
@@ -662,6 +723,8 @@ export function DepartmentCard({
               getEmpName={getEmpName}
               onRemoveAssignment={(empId) => onRemoveAssignment?.(empId)}
               onOpenTargetLevel={(emp) => setTargetLevelEmp(emp)}
+              competencySummaries={competencySummaries}
+              onOpenCompetencyDetail={onOpenCompetencyDetail}
             />
           </div>
         ) : (

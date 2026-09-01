@@ -131,6 +131,12 @@ export interface Scenario {
   canvas: ScenarioCanvas;
   /** v2.1.1：全量岗位扁平列表（所有部门岗位的镜像，作 analytics/AI/反查用；旧版文件缺省为空数组） */
   positions?: Position[];
+  /** v2.2.0：场景级胜任度模型（维度集合；缺省 = DEFAULT_COMPETENCY_MODEL，迁移/创建时回填） */
+  competencyModel?: CompetencyModel;
+  /** v2.2.0：扁平评估长表（原始事实，落库；派生值运行时算，不落库） */
+  assessments?: Assessment[];
+  /** v2.2.0：人岗时态关系表（追加式历史 + 人工确认落点；前向新增事实，迁移不回填） */
+  positionAssignments?: PositionAssignment[];
 }
 
 /** 项目 / .orgproj 文件的元信息 */
@@ -156,4 +162,92 @@ export interface WorkspaceSnapshot {
   projectName: string;
   currentScenarioId: string;
   scenarios: Scenario[];
+}
+
+// —— v2.2.0 胜任度引擎 ——
+
+/** 胜任度维度分组：leadership 干部 / staff 员工 */
+export type CompetencyGroup = 'leadership' | 'staff';
+
+/** 胜任度维度配置实体（可配置：维度名/定义/权重可自定义，key 稳定不可改） */
+export interface CompetencyDimensionDef {
+  /** 稳定 snake_case id（AI 语义 + 数据关联）。内置保留字 + 用户 `custom_*`（genDimensionKey 生成）；建后不可改。 */
+  key: string;
+  /** 显示名（可改，如「战略解码」） */
+  label: string;
+  /** 维度定义：① 用户理解「这维度衡量什么」；② 结构化语义供未来 AI 理解（受控词表 + 语义说明） */
+  definition: string;
+  /** 权重（>=0）。只影响总分排序，不影响木桶灯号；组内按已评维度归一化 */
+  weight: number;
+  /** 分组：leadership 干部 / staff 员工 */
+  group: CompetencyGroup;
+  /** 展示顺序（组内升序） */
+  order: number;
+  /** 软删：false = 停用（保留历史评估关联，不物理删） */
+  enabled: boolean;
+  /** 是否预设维度（内置维度不可物理删除，只可停用） */
+  builtin?: boolean;
+}
+
+/** 场景级胜任度模型（维度集合） */
+export interface CompetencyModel {
+  dimensions: CompetencyDimensionDef[];
+}
+
+/** 默认预设（可恢复起点）：干部 4 维各 0.25（等权）+ 员工 2 维各 0.5（等权）。 */
+export const DEFAULT_COMPETENCY_MODEL: CompetencyModel = {
+  dimensions: [
+    { key: 'leadership_strategy', label: '战略解码', definition: '把组织目标拆成团队可执行动作、分清优先级；能对齐上级目标拆解里程碑，资源与优先级取舍有依据。', weight: 0.25, group: 'leadership', order: 1, enabled: true, builtin: true },
+    { key: 'leadership_team', label: '带队育人', definition: '选人用人、辅导反馈、梯队建设；敢用敢换人、用人所长，给下属及时反馈，团队里有人可接班。', weight: 0.25, group: 'leadership', order: 2, enabled: true, builtin: true },
+    { key: 'leadership_results', label: '结果担当', definition: '拿结果、扛压、复盘迭代；对结果负责说到做到，高压下不甩锅，失败后复盘改进。', weight: 0.25, group: 'leadership', order: 3, enabled: true, builtin: true },
+    { key: 'leadership_collab', label: '协同影响', definition: '跨团队拉通、向上管理、冲突化解；跨部门协作不设卡，向上沟通清晰，化解团队内/间冲突。', weight: 0.25, group: 'leadership', order: 4, enabled: true, builtin: true },
+    { key: 'business', label: '业务能力', definition: '岗位专业深度、领域知识、交付质量；本岗硬技能熟练，交付稳定返工少，能独立解决复杂问题。', weight: 0.5, group: 'staff', order: 1, enabled: true, builtin: true },
+    { key: 'individual', label: '单兵能力', definition: '自驱、学习、协作沟通、解决问题、抗压；主动不推诿，学习快复用产出，沟通顺畅扛得住压力。', weight: 0.5, group: 'staff', order: 2, enabled: true, builtin: true },
+  ],
+};
+
+/** 评分人角色。MVP 只实现 supervisor（上级原始分）+ hrbp（校准并列呈现）；
+ *  self/peer/subordinate 为 360 枚举留位，不实现录入/算法。 */
+export type AssessorRole = 'supervisor' | 'hrbp' | 'self' | 'peer' | 'subordinate';
+
+/** 固定评分刻度（1-5 行为锚点，不可配） */
+export const COMPETENCY_SCALE = { min: 1, max: 5 } as const;
+
+/** 胜任度评估记录（一条 = 被评人 × 维度 × 评分人 × 时间；原始事实，落库） */
+export interface Assessment {
+  id: string;                  // uid('asm')
+  employeeId: string;          // FK → Employee.id（被评人，真人，非虚拟副本）
+  positionId?: string;         // FK → Position.id（可空 = 通用能力/干部）
+  dimension: string;           // FK → CompetencyDimensionDef.key（string，非硬枚举）
+  score: number;               // 原始分（1..5 整数）
+  scale: typeof COMPETENCY_SCALE; // 固定 {min:1,max:5}（快照落库，AI 归一化用）
+  requirement: number;         // 要求分（缺省 3；评估时快照落库，冻结时点标准）
+  assessorRole: AssessorRole;  // supervisor 原始分 / hrbp 校准
+  assessorId?: string;         // FK → Employee.id（评分人，可追溯）
+  assessedAt: string;          // 评分时间（ISO，时态）
+  source: 'manual' | 'import';
+  note?: string;               // 评分依据/行为锚点引用（可追溯，可选）
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 人岗时态关系类型：primary 主岗 / secondary 兼岗 */
+export type AssignmentType = 'primary' | 'secondary';
+
+/** 人岗时态关系状态：active 当前有效 / ended 已结束 / not_competent 已确认不胜任 */
+export type AssignmentStatus = 'active' | 'ended' | 'not_competent';
+
+/** 人岗时态关系记录（追加式历史 + 人工确认落点；前向新增事实） */
+export interface PositionAssignment {
+  id: string;                  // uid('asg')
+  employeeId: string;          // FK → Employee.id（真人，非虚拟副本）
+  positionId: string;          // FK → Position.id
+  type: AssignmentType;        // primary 主岗 / secondary 兼岗
+  startDate: string;           // 到岗日期（ISO date；前向写入时默认「操作当日」，可编辑）
+  endDate?: string;            // 离岗日期（可空 = 至今）
+  status: AssignmentStatus;    // active 当前有效 / ended 已结束 / not_competent 已确认不胜任
+  confirmedBy?: string;        // 人工确认人（FK → Employee，not_competent 落点）
+  confirmedAt?: string;        // 确认时间
+  createdAt: string;
+  updatedAt: string;
 }

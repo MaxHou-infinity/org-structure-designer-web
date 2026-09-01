@@ -13,9 +13,13 @@ import { SearchModal } from './components/SearchModal';
 import { PositionOpsModal } from './components/PositionOpsModal';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
+import { CompetencyDrawer } from './components/CompetencyDrawer';
+import { BatchAssessmentModal, NewAssessment } from './components/BatchAssessmentModal';
+import { CompetencyDetailModal } from './components/CompetencyDetailModal';
+import { CompetencyModelModal } from './components/CompetencyModelModal';
 import { computeUnassignedEmployees } from './utils/analytics';
 import { SearchHighlight } from './components/SearchContext';
-import { Employee, Department, OrgTemplate, Position } from './types';
+import { Employee, Department, OrgTemplate, Position, Assessment, COMPETENCY_SCALE } from './types';
 import { expandDepartments, SearchMatch } from './utils/search';
 import { computePositionSummary } from './utils/analytics';
 import { computeMatchStates } from './utils/match';
@@ -26,12 +30,21 @@ import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemp
 import {
   parseEmployeeExcel,
   parseOrgTemplateExcel,
+  parseAssessmentExcel,
   buildDepartmentTree,
   exportToExcel,
   generateSampleEmployeeTemplate,
   generateSampleOrgTemplate,
   getImportErrorMessage,
 } from './utils/excel';
+import {
+  computeCompetencyStates,
+  buildLeadershipDossier,
+  listAssessmentHistory,
+  benchmarkFor,
+  CompetencySummary,
+} from './utils/competency';
+import { confirmedNotCompetentSet } from './utils/assignment';
 import { saveTextFile, saveFile } from './utils/tauri';
 import { useOrgWorkspace } from './utils/useOrgWorkspace';
 
@@ -110,6 +123,12 @@ export default function App() {
     levelConfigs,
     setDepartments,
     setBoth,
+    assessments,
+    competencyModel,
+    positionAssignments,
+    setAssessments,
+    setCompetencyModel,
+    setPositionAssignments,
     undo,
     redo,
     canUndo,
@@ -147,6 +166,11 @@ export default function App() {
   const [unassignedOpen, setUnassignedOpen] = useState(false);
   // v2.1.1：岗位操作弹窗（顶部菜单「岗位」入口）
   const [positionOpsOpen, setPositionOpsOpen] = useState(false);
+  // —— v2.2.0 胜任度：看板抽屉 / 批量评估 / 详情 / 维度配置 ——
+  const [competencyOpen, setCompetencyOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [detailEmpId, setDetailEmpId] = useState<string | null>(null);
+  const [modelOpen, setModelOpen] = useState(false);
   // v2.0.3 修复：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构
   const [orgTemplates, setOrgTemplates] = useState<OrgTemplate[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -228,7 +252,7 @@ export default function App() {
       const parsedEmployees = await parseEmployeeExcel(file);
       // 用已保存的组织模板（若有）重建，保留模板的部门层级与负责人结构
       const tree = buildDepartmentTree(parsedEmployees, orgTemplatesRef.current);
-      setBoth(() => ({ departments: tree, allEmployeesFlat: parsedEmployees }));
+      setBoth((prev) => ({ ...prev, departments: tree, allEmployeesFlat: parsedEmployees }));
       if (parsedEmployees.length > 0) {
         showToast(`已导入 ${parsedEmployees.length} 名员工`);
       } else {
@@ -346,9 +370,56 @@ export default function App() {
     () => computePositionSummary(allPositions, allEmployeesFlat, levelConfigs),
     [allPositions, allEmployeesFlat, levelConfigs],
   );
+  // —— v2.2.0 胜任度：派生纯函数（运行时算、不落库） ——
+  // 已人工确认不胜任集合（PositionAssignment.status==='not_competent'）→ computeMatchStates 第三参
+  const confirmedNotCompetent = useMemo(
+    () => confirmedNotCompetentSet(positionAssignments),
+    [positionAssignments],
+  );
   const matchStates = useMemo(
-    () => computeMatchStates(allEmployeesFlat, allPositions),
-    [allEmployeesFlat, allPositions],
+    () => computeMatchStates(allEmployeesFlat, allPositions, confirmedNotCompetent),
+    [allEmployeesFlat, allPositions, confirmedNotCompetent],
+  );
+  // 全量员工 → CompetencySummary（每个员工一条；未评估 = overall:null 灰态占位）
+  const competencySummaries = useMemo(() => {
+    const m = new Map<string, CompetencySummary>();
+    for (const c of computeCompetencyStates(assessments, allEmployeesFlat, competencyModel)) {
+      m.set(c.employeeId, c);
+    }
+    return m;
+  }, [assessments, allEmployeesFlat, competencyModel]);
+
+  // 详情弹窗数据（按 detailEmpId 查 summary/dossier/history/position）
+  const detailEmployee = useMemo(
+    () => (detailEmpId ? allEmployeesFlat.find((e) => e.id === detailEmpId) ?? null : null),
+    [detailEmpId, allEmployeesFlat],
+  );
+  const detailSummary = useMemo(
+    () => (detailEmpId ? competencySummaries.get(detailEmpId) ?? null : null),
+    [detailEmpId, competencySummaries],
+  );
+  const detailPosition = useMemo(
+    () => (detailEmployee?.positionId ? allPositions.find((p) => p.id === detailEmployee.positionId) ?? null : null),
+    [detailEmployee, allPositions],
+  );
+  const detailDossier = useMemo(
+    () =>
+      detailEmpId
+        ? buildLeadershipDossier(assessments, detailEmpId, competencyModel, detailEmployee?.targetLevel)
+        : null,
+    [detailEmpId, assessments, competencyModel, detailEmployee],
+  );
+  const detailHistory = useMemo(
+    () => (detailEmpId ? listAssessmentHistory(assessments, detailEmpId, competencyModel) : []),
+    [detailEmpId, assessments, competencyModel],
+  );
+  const detailMatch = useMemo(
+    () => matchStates.find((r) => r.employeeId === detailEmpId),
+    [matchStates, detailEmpId],
+  );
+  const resolveEmployeeName = useCallback(
+    (id: string) => allEmployeesFlat.find((e) => e.id === id)?.name ?? id,
+    [allEmployeesFlat],
   );
 
   /** 将未入架构员工排入指定部门（历史感知） */
@@ -383,6 +454,7 @@ export default function App() {
             children: updateDepts(d.children),
           }));
         return {
+          ...prev,
           departments: updateDepts(prev.departments),
           allEmployeesFlat: prev.allEmployeesFlat.map(updateEmp),
         };
@@ -457,6 +529,7 @@ export default function App() {
       if (!emp || !positionId) return;
       const patch = (e: Employee) => (e.id === empId ? { ...e, positionId, assignmentType: 'primary' as const } : e);
       setBoth((prev) => ({
+        ...prev,
         departments: mapEmployeesInDepts(prev.departments, empId, patch),
         allEmployeesFlat: prev.allEmployeesFlat.map(patch),
       }));
@@ -470,6 +543,7 @@ export default function App() {
     (empId: string) => {
       const patch = (e: Employee) => (e.id === empId ? { ...e, positionId: undefined } : e);
       setBoth((prev) => ({
+        ...prev,
         departments: mapEmployeesInDepts(prev.departments, empId, patch),
         allEmployeesFlat: prev.allEmployeesFlat.map(patch),
       }));
@@ -498,7 +572,7 @@ export default function App() {
             if (d.children.length > 0) return { ...d, children: add(d.children) };
             return d;
           });
-        return { departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
+        return { ...prev, departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
       });
       showToast(`已为 ${source.name} 创建兼岗`);
     },
@@ -522,6 +596,7 @@ export default function App() {
             return d;
           });
         return {
+          ...prev,
           departments: add(removed),
           allEmployeesFlat: prev.allEmployeesFlat.map((e) => (e.id === empId ? assign(e) : e)),
         };
@@ -570,7 +645,7 @@ export default function App() {
       const tpl = findIndustryTemplate(id);
       if (!tpl) return;
       const built = loadIndustryTemplate(tpl);
-      setBoth(() => ({ departments: built.departments, allEmployeesFlat: built.allEmployeesFlat }));
+      setBoth((prev) => ({ ...prev, departments: built.departments, allEmployeesFlat: built.allEmployeesFlat }));
       showToast(`已载入「${tpl.name}」模板`);
     },
     [setBoth, showToast],
@@ -587,6 +662,7 @@ export default function App() {
         });
       };
       return {
+        ...prev,
         departments: remove(prev.departments),
         allEmployeesFlat: wasVirtual ? prev.allEmployeesFlat.filter((e) => e.id !== empId) : prev.allEmployeesFlat,
       };
@@ -659,7 +735,7 @@ export default function App() {
           return dept;
         });
       };
-      return { departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
+      return { ...prev, departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
     });
     showToast(`已创建 ${source.name} 的兼岗`);
   }, [allEmployeesFlat, setBoth, showToast]);
@@ -815,7 +891,7 @@ export default function App() {
       dept5: e.dept5,
       dept6: e.dept6,
     }));
-    setBoth(() => ({ departments: buildDepartmentTree(employees, TEST_ORG), allEmployeesFlat: employees }));
+    setBoth((prev) => ({ ...prev, departments: buildDepartmentTree(employees, TEST_ORG), allEmployeesFlat: employees }));
     showToast('已加载示例数据');
   }, [setBoth, showToast]);
 
@@ -847,6 +923,143 @@ export default function App() {
     setHealthFocusDeptId(undefined);
     setHealthOpen(true);
   }, []);
+
+  // —— v2.2.0 胜任度接线 ——
+
+  /** 看板「点击部门卡 → 画布定位」：展开祖先链 + 滚动到节点（与差异视图 handleLocateDept 同心智）。 */
+  const handleCompetencyFocusDept = useCallback(
+    (deptId: string) => {
+      const chain = findDeptChain(departments, deptId);
+      if (!chain) {
+        showToast('该部门不在当前场景组织中，无法定位');
+        return;
+      }
+      setDepartments((prev) => expandDepartments(prev, new Set(chain)));
+      window.setTimeout(() => {
+        document
+          .querySelector<HTMLElement>(`[data-dept-id="${deptId}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }, 80);
+    },
+    [departments, setDepartments, showToast],
+  );
+
+  /** 批量评估保存：追加写入 Assessment 长表（append-only；latest-wins 由派生层按 assessedAt 处理）。 */
+  const handleSaveAssessments = useCallback(
+    (rows: NewAssessment[]) => {
+      const now = new Date().toISOString();
+      setAssessments((prev) => [
+        ...prev,
+        ...rows.map((r) => ({
+          id: uid('asm'),
+          employeeId: r.employeeId,
+          positionId: r.positionId,
+          dimension: r.dimension,
+          score: r.score,
+          scale: COMPETENCY_SCALE,
+          requirement: r.requirement,
+          assessorRole: r.assessorRole,
+          assessorId: r.assessorId,
+          assessedAt: r.assessedAt,
+          source: r.source,
+          note: r.note,
+          createdAt: now,
+          updatedAt: now,
+        })),
+      ]);
+      showToast(`已保存 ${rows.length} 条评估（评分人/时间已留痕）`);
+    },
+    [setAssessments, showToast],
+  );
+
+  /** Excel 评分导入：parseAssessmentExcel(file, model) 解析 → 解析员工标识 → 快照 requirement → 写入。
+   *  未知员工/格式冲突报错不静默（对齐 ux §1.5）。 */
+  const handleImportAssessmentExcel = useCallback(
+    async (file: File) => {
+      try {
+        const rows = await parseAssessmentExcel(file, competencyModel);
+        if (rows.length === 0) {
+          showToast('评分文件无有效数据，请检查格式');
+          return;
+        }
+        // 员工标识 → Employee.id：工号优先，回退姓名（与 EmployeeImportRow 解析口径一致）
+        const byKey = new Map<string, Employee>();
+        for (const e of allEmployeesFlat) {
+          if (e.isVirtual) continue;
+          if (!byKey.has(e.employeeId)) byKey.set(e.employeeId, e);
+          if (!byKey.has(e.name)) byKey.set(e.name, e);
+        }
+        const unknownKeys = rows.filter((r) => !byKey.has(r.employeeKey)).map((r) => r.employeeKey);
+        if (unknownKeys.length > 0) {
+          showToast(`导入失败：未知员工 ${unknownKeys.slice(0, 5).join('、')}${unknownKeys.length > 5 ? ` 等 ${unknownKeys.length} 人` : ''}（请核对工号/姓名）`);
+          return;
+        }
+        const now = new Date().toISOString();
+        const created: Assessment[] = [];
+        for (const row of rows) {
+          const emp = byKey.get(row.employeeKey)!;
+          const position = emp.positionId ? allPositions.find((p) => p.id === emp.positionId) : undefined;
+          const assessedAt = row.assessedAt
+            ? new Date(`${row.assessedAt}T12:00:00`).toISOString()
+            : now;
+          for (const [dimKey, score] of Object.entries(row.scores)) {
+            created.push({
+              id: uid('asm'),
+              employeeId: emp.id,
+              positionId: emp.positionId,
+              dimension: dimKey,
+              score,
+              scale: COMPETENCY_SCALE,
+              requirement: benchmarkFor(emp, position),
+              assessorRole: 'supervisor',
+              assessorId: row.assessorName,
+              assessedAt,
+              source: 'import',
+              note: row.note,
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        }
+        setAssessments((prev) => [...prev, ...created]);
+        showToast(`已导入 ${created.length} 条评分（${rows.length} 名员工）`);
+      } catch (error) {
+        console.error('解析评分表失败:', error);
+        showToast(getImportErrorMessage(error));
+      }
+    },
+    [competencyModel, allEmployeesFlat, allPositions, setAssessments, showToast],
+  );
+
+  /** HRBP 人工确认 / 撤销 not_competent（两态：候选派生 → 人工确认落库留痕；红线：系统不自动定级）。 */
+  const handleConfirmNotCompetent = useCallback(
+    (empId: string, confirmed: boolean) => {
+      const now = new Date().toISOString();
+      setPositionAssignments((prev) => {
+        if (!confirmed) {
+          return prev.filter((a) => !(a.employeeId === empId && a.status === 'not_competent'));
+        }
+        if (prev.some((a) => a.employeeId === empId && a.status === 'not_competent')) return prev;
+        const emp = allEmployeesFlat.find((e) => e.id === empId);
+        return [
+          ...prev,
+          {
+            id: uid('asg'),
+            employeeId: empId,
+            positionId: emp?.positionId ?? '',
+            type: 'primary' as const,
+            startDate: now,
+            status: 'not_competent' as const,
+            confirmedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ];
+      });
+      showToast(confirmed ? '已确认不胜任（留痕）' : '已撤销不胜任确认');
+    },
+    [setPositionAssignments, allEmployeesFlat, showToast],
+  );
 
   // —— v2.0.9 场景差异比较 ——
 
@@ -983,6 +1196,7 @@ export default function App() {
         onOpenSearch={() => setSearchOpen(true)}
         onLoadIndustryTemplate={handleLoadIndustryTemplate}
         onOpenPositionOps={() => setPositionOpsOpen(true)}
+        onOpenCompetency={() => setCompetencyOpen(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1034,6 +1248,8 @@ export default function App() {
             matchStates={matchStates}
             onSetPositionHeadcount={handleSetPositionHeadcount}
             onRemoveAssignment={handleRemoveAssignment}
+            competencySummaries={competencySummaries}
+            onOpenCompetencyDetail={(empId) => setDetailEmpId(empId)}
           />
         </main>
       </div>
@@ -1170,6 +1386,58 @@ export default function App() {
         onSetPositionHeadcount={handleSetPositionHeadcount}
         onAssignEmployeeToPosition={handleAssignEmployeeToPosition}
         onCreateVirtualForPosition={handleCreateVirtualForPosition}
+      />
+
+      {/* —— v2.2.0 胜任度：看板抽屉 / 批量评估 / 详情 / 维度配置 —— */}
+      <CompetencyDrawer
+        open={competencyOpen}
+        onClose={() => setCompetencyOpen(false)}
+        competencySummaries={competencySummaries}
+        matchStates={matchStates}
+        departments={departments}
+        allEmployees={allEmployeesFlat}
+        allPositions={allPositions}
+        onFocusDept={handleCompetencyFocusDept}
+        onOpenDetail={(empId) => setDetailEmpId(empId)}
+        onStartBatch={() => setBatchOpen(true)}
+        onOpenModelConfig={() => setModelOpen(true)}
+        onConfirmNotCompetent={handleConfirmNotCompetent}
+        confirmedNotCompetent={confirmedNotCompetent}
+      />
+
+      <BatchAssessmentModal
+        open={batchOpen}
+        onClose={() => setBatchOpen(false)}
+        departments={departments}
+        allEmployees={allEmployeesFlat}
+        allPositions={allPositions}
+        competencyModel={competencyModel}
+        assessments={assessments}
+        onSave={handleSaveAssessments}
+        onImportExcel={handleImportAssessmentExcel}
+      />
+
+      <CompetencyDetailModal
+        open={detailEmpId !== null}
+        onClose={() => setDetailEmpId(null)}
+        employee={detailEmployee}
+        position={detailPosition}
+        summary={detailSummary}
+        dossier={detailDossier}
+        history={detailHistory}
+        matchStatus={detailMatch?.status}
+        resolveName={resolveEmployeeName}
+      />
+
+      <CompetencyModelModal
+        open={modelOpen}
+        onClose={() => setModelOpen(false)}
+        model={competencyModel}
+        assessments={assessments}
+        onSave={(m) => {
+          setCompetencyModel(m);
+          showToast('维度配置已保存');
+        }}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate, GitCompare, Briefcase } from 'lucide-react';
+import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate, GitCompare, Briefcase, Target } from 'lucide-react';
 import { Scenario } from '../types';
 import { OrgTemplate } from '../types';
 import { SaveState } from '../utils/useOrgWorkspace';
@@ -55,6 +55,8 @@ interface TopBarProps {
   onLoadIndustryTemplate: (id: string) => void;
   /** v2.1.1：打开「岗位操作」弹窗（新建/套岗/建虚拟兼岗） */
   onOpenPositionOps: () => void;
+  /** v2.2.0：打开「胜任度」看板抽屉（评估/看板/维度配置入口） */
+  onOpenCompetency: () => void;
 }
 
 function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastSavedAt: string | null }) {
@@ -99,6 +101,7 @@ export function TopBar({
   onOpenSearch,
   onLoadIndustryTemplate,
   onOpenPositionOps,
+  onOpenCompetency,
 }: TopBarProps) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -282,6 +285,17 @@ export function TopBar({
         >
           <Briefcase className="w-4 h-4" />
           岗位
+        </button>
+
+        {/* v2.2.0：胜任度入口（看板/批量评估/维度配置；无数据时禁用） */}
+        <button
+          onClick={onOpenCompetency}
+          disabled={!hasData}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="胜任度：评估/看板/维度配置"
+        >
+          <Target className="w-4 h-4" />
+          胜任度
         </button>
       </div>
 

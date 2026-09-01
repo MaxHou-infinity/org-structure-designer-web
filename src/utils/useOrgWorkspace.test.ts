@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useOrgWorkspace } from './useOrgWorkspace';
 import * as projectModule from './project';
+import type { Assessment, PositionAssignment, CompetencyModel } from '../types';
 
 // React 18 的 act 需要在 jsdom 下显式声明
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -101,5 +102,176 @@ describe('useOrgWorkspace SaveState 状态机', () => {
     });
     expect(result.current.saveState).toBe('failed');
     spy.mockRestore();
+  });
+});
+
+/** 构造一条评估记录（原始事实，缺省业务能力 4 分） */
+function asm(partial: Partial<Assessment> = {}): Assessment {
+  return {
+    id: 'asm-1',
+    employeeId: 'e1',
+    dimension: 'business',
+    score: 4,
+    scale: { min: 1, max: 5 },
+    requirement: 3,
+    assessorRole: 'supervisor',
+    assessedAt: '2026-01-10T00:00:00.000Z',
+    source: 'manual',
+    createdAt: '2026-01-10T00:00:00.000Z',
+    updatedAt: '2026-01-10T00:00:00.000Z',
+    ...partial,
+  };
+}
+
+/** 构造一条人岗时态关系记录 */
+function pasg(partial: Partial<PositionAssignment> = {}): PositionAssignment {
+  return {
+    id: 'asg-1',
+    employeeId: 'e1',
+    positionId: 'p1',
+    type: 'primary',
+    startDate: '2026-01-01',
+    status: 'active',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...partial,
+  };
+}
+
+/** 自定义胜任度模型（单维） */
+const customModel: CompetencyModel = {
+  dimensions: [
+    { key: 'business', label: '业务能力', definition: '岗位专业深度', weight: 1, group: 'staff', order: 1, enabled: true },
+  ],
+};
+
+describe('useOrgWorkspace v2.2.0 胜任度三字段', () => {
+  const storage = new Map<string, string>();
+
+  beforeEach(() => {
+    storage.clear();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => storage.set(k, v),
+      removeItem: (k: string) => storage.delete(k),
+    });
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('初始三字段：空评估 / 默认模型 / 空时态表', () => {
+    const { result } = renderHook(() => useOrgWorkspace());
+    expect(result.current.assessments).toEqual([]);
+    expect(result.current.positionAssignments).toEqual([]);
+    expect(result.current.competencyModel.dimensions).toHaveLength(6);
+    // 与当前场景缺省一致（场景未显式携带时取默认模型，不丢数据）
+    expect(result.current.currentScenario.competencyModel?.dimensions).toHaveLength(6);
+  });
+
+  it('三字段更新器（fn|value）更新 live，自动保存后写入场景（保存→场景一致）', () => {
+    const { result } = renderHook(() => useOrgWorkspace());
+    act(() => {
+      result.current.setAssessments((prev) => [...prev, asm()]);
+      result.current.setPositionAssignments([pasg()]);
+      result.current.setCompetencyModel(customModel);
+    });
+    expect(result.current.assessments).toHaveLength(1);
+    expect(result.current.positionAssignments).toHaveLength(1);
+    expect(result.current.competencyModel.dimensions).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(800); // 自动保存 → patchCurrentScenario 落盘
+    });
+    const scenario = result.current.project.scenarios[0];
+    expect(scenario.assessments).toHaveLength(1);
+    expect(scenario.assessments![0].score).toBe(4);
+    expect(scenario.positionAssignments).toHaveLength(1);
+    expect(scenario.competencyModel!.dimensions).toHaveLength(1);
+  });
+
+  it('导出→重导入（序列化→sanitize→loadSnapshot）三字段不丢', () => {
+    const { result } = renderHook(() => useOrgWorkspace());
+    act(() => {
+      result.current.setAssessments([asm()]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+    const json = result.current.exportProjectJson();
+    act(() => {
+      result.current.importProjectJson(json);
+    });
+    expect(result.current.assessments).toHaveLength(1);
+    expect(result.current.assessments[0].employeeId).toBe('e1');
+  });
+
+  it('场景切换：新场景复制三字段，切回原场景恢复一致（不丢数据）', () => {
+    const { result } = renderHook(() => useOrgWorkspace());
+    const origId = result.current.currentScenarioId;
+    act(() => {
+      result.current.setAssessments([asm()]);
+      result.current.setPositionAssignments([pasg()]);
+      result.current.setCompetencyModel(customModel);
+    });
+    act(() => {
+      result.current.createNewScenario('方案B');
+    });
+    const newId = result.current.currentScenarioId;
+    expect(newId).not.toBe(origId);
+    expect(result.current.assessments).toHaveLength(1);
+
+    act(() => {
+      result.current.switchScenario(origId);
+    });
+    expect(result.current.assessments).toHaveLength(1);
+    expect(result.current.positionAssignments).toHaveLength(1);
+    expect(result.current.competencyModel.dimensions).toHaveLength(1);
+
+    act(() => {
+      result.current.switchScenario(newId);
+    });
+    expect(result.current.assessments).toHaveLength(1);
+    expect(result.current.positionAssignments).toHaveLength(1);
+  });
+
+  it('三字段更新历史感知：undo/redo 完整恢复', () => {
+    const { result } = renderHook(() => useOrgWorkspace());
+    act(() => {
+      result.current.setCompetencyModel(customModel);
+      result.current.setAssessments([asm()]);
+    });
+    expect(result.current.competencyModel.dimensions).toHaveLength(1);
+    expect(result.current.assessments).toHaveLength(1);
+
+    // 第一次 undo：回退最近一次变更（assessments），模型保持自定义
+    act(() => {
+      result.current.undo();
+    });
+    expect(result.current.competencyModel.dimensions).toHaveLength(1);
+    expect(result.current.assessments).toEqual([]);
+
+    // 第二次 undo：回退到初始默认模型
+    act(() => {
+      result.current.undo();
+    });
+    expect(result.current.competencyModel.dimensions).toHaveLength(6);
+    expect(result.current.assessments).toEqual([]);
+
+    act(() => {
+      result.current.redo();
+    });
+    expect(result.current.competencyModel.dimensions).toHaveLength(1);
+    expect(result.current.assessments).toEqual([]);
+
+    act(() => {
+      result.current.redo();
+    });
+    expect(result.current.competencyModel.dimensions).toHaveLength(1);
+    expect(result.current.assessments).toHaveLength(1);
   });
 });

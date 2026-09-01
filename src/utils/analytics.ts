@@ -1340,8 +1340,9 @@ export function collectAllSuggestions(
 
 /** —— v2.0.5：未入架构员工 & 员工职级差距 —— */
 
-/** 解析职级码中的数字部分（如 'L1.1' → 1.1；'L5' → 5）。解析失败返回 null。 */
-function parseLevelNumber(code: string): number | null {
+/** 解析职级码中的数字部分（如 'L1.1' → 1.1；'L5' → 5）。解析失败返回 null。
+ *  v2.2.0：从 private 改为导出，供 competency.ts 的 benchmarkFor / positionBandRequirement 复用（不复制实现）。 */
+export function parseLevelNumber(code: string): number | null {
   const num = code.replace(/^[A-Za-z]+/, '').trim();
   if (!num) return null;
   const n = Number.parseFloat(num);

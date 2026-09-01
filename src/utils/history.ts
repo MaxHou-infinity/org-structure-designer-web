@@ -1,4 +1,5 @@
 import { useRef, useSyncExternalStore } from 'react';
+import type { Assessment, CompetencyModel, Department, Employee, PositionAssignment } from '../types';
 
 /**
  * 撤销 / 重做历史栈（纯逻辑 + React 适配）。
@@ -94,10 +95,18 @@ export class HistoryStore<T> {
   }
 }
 
-/** 撤销/重做快照实体（App 用它容纳 departments + allEmployeesFlat） */
+/** 撤销/重做快照实体（App 用它容纳 departments + allEmployeesFlat + v2.2.0 场景三字段）
+ *  - assessments / competencyModel / positionAssignments 与场景级 `.orgproj` 字段一一对应，
+ *    快照必须是完整事实集（不得丢弃三字段），派生值（Gap/灯号/总分）不落快照、运行时算。 */
 export interface HistorySnapshot {
-  departments: import('../types').Department[];
-  allEmployeesFlat: import('../types').Employee[];
+  departments: Department[];
+  allEmployeesFlat: Employee[];
+  /** v2.2.0：扁平评估长表（原始事实；派生不落库） */
+  assessments: Assessment[];
+  /** v2.2.0：场景级胜任度模型（维度集合；live 与场景一致） */
+  competencyModel: CompetencyModel;
+  /** v2.2.0：人岗时态关系表（追加式历史 + 人工确认落点） */
+  positionAssignments: PositionAssignment[];
 }
 
 /**

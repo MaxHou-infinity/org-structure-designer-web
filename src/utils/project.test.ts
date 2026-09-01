@@ -13,7 +13,7 @@ import {
   DEFAULT_SCENARIO_NAME,
 } from './project';
 import { computeL2 } from './analytics';
-import { Scenario, Department, Employee } from '../types';
+import { Scenario, Department, Employee, DEFAULT_COMPETENCY_MODEL } from '../types';
 
 function emp(id: string): Employee {
   return { id, name: id, employeeId: id, level: 'L1.1' };
@@ -69,6 +69,53 @@ describe('createProject / createScenario', () => {
     expect(clone.departments[0].employees).not.toBe(orig.departments[0].employees);
     // 原场景不受影响
     expect(orig.departments[0].name).toBe('技术部');
+  });
+
+  it('v2.2.0：基线场景携带胜任度三字段（默认模型 6 维 + 两张空表）', () => {
+    const p = createProject('胜任度项目');
+    const s = p.scenarios[0];
+    expect(s.competencyModel?.dimensions).toHaveLength(6);
+    expect(s.competencyModel?.dimensions.map((d) => d.key)).toEqual([
+      'leadership_strategy', 'leadership_team', 'leadership_results', 'leadership_collab',
+      'business', 'individual',
+    ]);
+    expect(s.assessments).toEqual([]);
+    expect(s.positionAssignments).toEqual([]);
+  });
+
+  it('v2.2.0：createScenario 快照缺三字段 → 缺省回退（默认模型 + 空表），兼容旧调用方', () => {
+    const s = createScenario('旧快照', { departments: [], allEmployeesFlat: [], levelConfigs: [], canvas: { zoom: 100 } });
+    expect(s.competencyModel?.dimensions).toHaveLength(6);
+    expect(s.assessments).toEqual([]);
+    expect(s.positionAssignments).toEqual([]);
+  });
+
+  it('v2.2.0：cloneScenario 深拷贝胜任度三字段，不共享引用', () => {
+    const orig: Scenario = {
+      id: 's1',
+      name: '带评估的场景',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01',
+      departments: [],
+      allEmployeesFlat: [],
+      levelConfigs: [],
+      canvas: { zoom: 100 },
+      competencyModel: structuredClone(DEFAULT_COMPETENCY_MODEL),
+      assessments: [
+        { id: 'asm-1', employeeId: 'e1', dimension: 'leadership_strategy', score: 4, scale: { min: 1, max: 5 }, requirement: 4, assessorRole: 'supervisor', assessedAt: '2026-01-01T00:00:00Z', source: 'manual', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      ],
+      positionAssignments: [
+        { id: 'asg-1', employeeId: 'e1', positionId: 'p1', type: 'primary', startDate: '2026-01-01', status: 'active', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      ],
+    };
+    const clone = cloneScenario(orig);
+    expect(clone.competencyModel).not.toBe(orig.competencyModel);
+    expect(clone.assessments).not.toBe(orig.assessments);
+    expect(clone.positionAssignments).not.toBe(orig.positionAssignments);
+    clone.assessments![0].score = 2;
+    clone.positionAssignments![0].status = 'ended';
+    expect(orig.assessments![0].score).toBe(4);
+    expect(orig.positionAssignments![0].status).toBe('active');
   });
 });
 
@@ -180,7 +227,7 @@ describe('getCurrentScenario', () => {
 });
 
 describe('parseProject 版本迁移与字段归一化', () => {
-  it('缺 version → 默认 PROJECT_VERSION（1）', () => {
+  it('缺 version → 默认 PROJECT_VERSION（3）', () => {
     const raw = JSON.stringify({ id: 'proj', name: 'x', scenarios: [{ id: 's1', name: 'A' }] });
     const p = parseProject(raw)!;
     expect(p.version).toBe(PROJECT_VERSION);
@@ -302,6 +349,10 @@ describe('v2.0.9 .orgproj 往返一致守卫', () => {
         levelConfigs: [{ code: 'L', number: '1.1', label: '初级', color: '#FFCC99', cost: 2 }],
         canvas: { zoom: 120, lastFocusedDeptId: 'd1' },
         positions: [],
+        // —— v2.2.0：胜任度三字段（往返守卫对齐） ——
+        competencyModel: DEFAULT_COMPETENCY_MODEL,
+        assessments: [],
+        positionAssignments: [],
       }],
       meta: { createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', version: PROJECT_VERSION },
     };
@@ -325,5 +376,79 @@ describe('v2.0.9 .orgproj 往返一致守卫', () => {
     expect(span.spanBreakdown).toBeDefined();
     expect(after.find((m) => m.key === 'depth')!.depthBreakdown).toBeDefined();
     expect(after.find((m) => m.key === 'managerRatio')!.managerBreakdown).toBeDefined();
+  });
+});
+
+// —— —— v2.2.0：胜任度三张表 sanitize（design doc §4.3） —— ——
+
+describe('v2.2.0 胜任度三张表 sanitize', () => {
+  function rawProject(scenario: Record<string, unknown>): string {
+    return JSON.stringify({
+      id: 'proj',
+      name: 'sanitize',
+      version: 3,
+      currentScenarioId: 's1',
+      scenarios: [{ id: 's1', name: 'A', departments: [], allEmployeesFlat: [], levelConfigs: [], canvas: {}, ...scenario }],
+      meta: { version: 3 },
+    });
+  }
+
+  it('维度逐条校验：非法维度丢单条；全非法 → 回退默认预设', () => {
+    const p = parseProject(rawProject({
+      competencyModel: {
+        dimensions: [
+          { key: 'custom_ok_123456', label: '合法维度', definition: '定义', weight: 0.3, group: 'staff', order: 1, enabled: true },
+          { key: '非法Key!', label: '非法 key 形式', definition: 'd', weight: 0.2, group: 'staff', order: 2, enabled: true }, // 丢
+          { key: 'no_weight', label: '缺权重', definition: 'd', group: 'staff', order: 3, enabled: true },                    // 丢
+          { key: 'bad_group', label: '非法分组', definition: 'd', weight: 0.2, group: 'exec', order: 4, enabled: true },       // 丢
+          { key: 'neg_weight', label: '负权重', definition: 'd', weight: -1, group: 'staff', order: 5, enabled: true },        // 丢
+        ],
+      },
+    }))!;
+    const model = p.scenarios[0].competencyModel!;
+    expect(model.dimensions).toHaveLength(1);
+    expect(model.dimensions[0].key).toBe('custom_ok_123456');
+    expect(model.dimensions[0].builtin).toBeUndefined();
+
+    const empty = parseProject(rawProject({ competencyModel: { dimensions: [] } }))!;
+    expect(empty.scenarios[0].competencyModel?.dimensions).toHaveLength(6); // 空 → 默认预设
+  });
+
+  it('评估逐条校验：必填缺失/分数越界/非法 dimension/非 supervisor|hrbp → 丢；requirement 回填 3；scale 强制 1..5', () => {
+    const p = parseProject(rawProject({
+      competencyModel: DEFAULT_COMPETENCY_MODEL,
+      assessments: [
+        { id: 'asm-1', employeeId: 'e1', dimension: 'leadership_strategy', score: 4, requirement: 4, assessorRole: 'supervisor', assessedAt: '2026-01-01', source: 'manual' },
+        { id: 'asm-2', employeeId: 'e2', dimension: 'leadership_team', score: 7, assessorRole: 'supervisor', assessedAt: '2026-01-01' },          // score 越界 → 丢
+        { id: 'asm-3', employeeId: 'e3', dimension: 'Bad Dimension', score: 3, assessorRole: 'supervisor', assessedAt: '2026-01-01' },             // dimension 非法形式 → 丢
+        { id: 'asm-4', employeeId: 'e4', dimension: 'business', score: 3, assessorRole: 'self', assessedAt: '2026-01-01' },                        // 非 MVP 角色 → 丢
+        { id: 'asm-5', employeeId: 'e5', dimension: 'custom_ghost_000001', score: 2, requirement: 9, assessorRole: 'hrbp', assessedAt: '2026-01-01' }, // orphan key 保留 + requirement 回填 3
+        { id: 'asm-6', employeeId: 'e6', dimension: 'individual', score: 3, assessorRole: 'supervisor' },                                           // 缺 assessedAt → 丢
+      ],
+    }))!;
+    const assessments = p.scenarios[0].assessments!;
+    expect(assessments).toHaveLength(2);
+    expect(assessments[0].id).toBe('asm-1');
+    expect(assessments[0].scale).toEqual({ min: 1, max: 5 });
+    expect(assessments[0].requirement).toBe(4);
+    expect(assessments[1].id).toBe('asm-5'); // orphan（key 不在模型）保留单条
+    expect(assessments[1].requirement).toBe(3); // 9 越界 → 回填 3
+    expect(assessments[1].assessorRole).toBe('hrbp');
+  });
+
+  it('人岗时态逐条校验：必填缺失丢单条；type/status 非法回退 primary/active', () => {
+    const p = parseProject(rawProject({
+      positionAssignments: [
+        { id: 'asg-1', employeeId: 'e1', positionId: 'p1', startDate: '2026-01-01', type: 'primary', status: 'active' },
+        { id: 'asg-2', employeeId: 'e2', positionId: 'p2', startDate: '2026-01-01', type: 'weird', status: 'bogus' }, // 回退 primary/active
+        { id: 'asg-3', employeeId: 'e3', positionId: 'p3', type: 'primary', status: 'active' },                      // 缺 startDate → 丢
+        { id: 'asg-4', employeeId: 'e4', positionId: 'p4', startDate: '2026-01-01', type: 'secondary', status: 'not_competent', confirmedBy: 'e9', confirmedAt: '2026-02-01' },
+      ],
+    }))!;
+    const asg = p.scenarios[0].positionAssignments!;
+    expect(asg).toHaveLength(3);
+    expect(asg[0]).toMatchObject({ id: 'asg-1', type: 'primary', status: 'active' });
+    expect(asg[1]).toMatchObject({ id: 'asg-2', type: 'primary', status: 'active' });
+    expect(asg[2]).toMatchObject({ id: 'asg-4', type: 'secondary', status: 'not_competent', confirmedBy: 'e9' });
   });
 });

@@ -6,12 +6,15 @@ import {
   exportToExcel,
   buildSampleEmployeeTemplateBytes,
   buildSampleOrgTemplateBytes,
+  buildSampleAssessmentTemplateBytes,
   generateSampleEmployeeTemplate,
   generateSampleOrgTemplate,
   mapEmployeeRows,
   mapPositionRows,
+  mapAssessmentRows,
   resolveReportsToEmployeeIds,
   collectAllPositions,
+  ExcelImportError,
 } from './excel';
 import { saveFile } from './tauri';
 
@@ -25,7 +28,8 @@ vi.mock('xlsx', async (importOriginal) => {
   const actual = await importOriginal<typeof import('xlsx')>();
   return { ...actual, writeFile: vi.fn() };
 });
-import type { Employee, OrgTemplate, Department } from '../types';
+import type { Employee, OrgTemplate, Department, CompetencyModel } from '../types';
+import { DEFAULT_COMPETENCY_MODEL } from '../types';
 
 /** 构造一个员工对象 */
 function emp(partial: Partial<Employee> & { name: string; employeeId: string }): Employee {
@@ -410,5 +414,109 @@ describe('v2.1.1 岗位表 sheet：mapPositionRows', () => {
       { '一级部门': '销售部', '岗位名称': '经理' },
     ];
     expect(mapPositionRows(rows)).toHaveLength(2);
+  });
+});
+
+describe('v2.2.0 胜任度评分导入：mapAssessmentRows', () => {
+  it('正常映射：工号 → employeeKey、维度 label → key、评分人/日期/备注', () => {
+    const rows = [
+      {
+        '工号': 'E001', '姓名': '张三',
+        '战略解码': 4, '带队育人': 3, '结果担当': '', '协同影响': 4,
+        '业务能力': 4, '单兵能力': 3,
+        '评分人': '王五', '评估日期': '2026-01-10', '备注': '行为锚点引用',
+      },
+    ];
+    const [r] = mapAssessmentRows(rows, DEFAULT_COMPETENCY_MODEL);
+    expect(r.employeeKey).toBe('E001');
+    expect(r.scores).toEqual({
+      'leadership_strategy': 4,
+      'leadership_team': 3,
+      'leadership_collab': 4,
+      'business': 4,
+      'individual': 3,
+    });
+    expect(r.assessorName).toBe('王五');
+    expect(r.assessedAt).toBe('2026-01-10');
+    expect(r.note).toBe('行为锚点引用');
+  });
+
+  it('未填维度列（未评）不出现于 scores；评分人/日期/备注缺省不落字段', () => {
+    const [r] = mapAssessmentRows([{ '工号': 'E002', '业务能力': 3 }], DEFAULT_COMPETENCY_MODEL);
+    expect(r.scores).toEqual({ 'business': 3 });
+    expect(r.assessorName).toBeUndefined();
+    expect(r.assessedAt).toBeUndefined();
+    expect(r.note).toBeUndefined();
+  });
+
+  it('员工标识缺省回退姓名（工号为空时）', () => {
+    const [r] = mapAssessmentRows([{ '姓名': '李四', '业务能力': 3 }], DEFAULT_COMPETENCY_MODEL);
+    expect(r.employeeKey).toBe('李四');
+  });
+
+  it('维度分越界/非整数/非数字 → 抛 ExcelImportError（invalid-structure），报错不静默', () => {
+    for (const bad of [6, 0, 2.5, 'abc']) {
+      expect(() =>
+        mapAssessmentRows([{ '工号': 'E001', '业务能力': bad }], DEFAULT_COMPETENCY_MODEL),
+      ).toThrow(ExcelImportError);
+    }
+    expect(() =>
+      mapAssessmentRows([{ '工号': 'E001', '业务能力': 7 }], DEFAULT_COMPETENCY_MODEL),
+    ).toThrow(/1–5/);
+  });
+
+  it('未知员工标识（工号与姓名均为空）→ 抛 ExcelImportError', () => {
+    expect(() =>
+      mapAssessmentRows([{ '工号': '', '姓名': '', '业务能力': 3 }], DEFAULT_COMPETENCY_MODEL),
+    ).toThrow(/缺少员工标识/);
+  });
+
+  it('未知维度列 → 抛 ExcelImportError（invalid-structure），不静默吞', () => {
+    expect(() =>
+      mapAssessmentRows([{ '工号': 'E001', '部门': '技术部', '业务能力': 3 }], DEFAULT_COMPETENCY_MODEL),
+    ).toThrow(/未知列/);
+    // 停用维度（enabled:false）不是评分列 → 同样报错
+    const modelWithDisabled: CompetencyModel = {
+      dimensions: [
+        { key: 'business', label: '业务能力', definition: 'd', weight: 1, group: 'staff', order: 1, enabled: true },
+        { key: 'old_dim', label: '停用维度', definition: 'd', weight: 1, group: 'staff', order: 2, enabled: false },
+      ],
+    };
+    expect(() =>
+      mapAssessmentRows([{ '工号': 'E001', '停用维度': 3 }], modelWithDisabled),
+    ).toThrow(/未知列/);
+  });
+
+  it('模板维度列随 model 动态生成：enabled 维度为列头，停用维度不生成，且模板可回读导入', async () => {
+    const model: CompetencyModel = {
+      dimensions: [
+        { key: 'business', label: '业务能力', definition: '岗位专业深度', weight: 1, group: 'staff', order: 1, enabled: true },
+        { key: 'individual', label: '单兵能力', definition: '自驱协作', weight: 1, group: 'staff', order: 2, enabled: true },
+        { key: 'old_dim', label: '停用维度', definition: 'd', weight: 1, group: 'staff', order: 3, enabled: false },
+      ],
+    };
+    const bytes = await buildSampleAssessmentTemplateBytes(model);
+    expect(bytes[0]).toBe(0x50);
+    expect(bytes[1]).toBe(0x4B);
+    expect(bytes.length).toBeGreaterThan(500);
+
+    const wb = XLSX.read(bytes, { type: 'array' });
+    expect(wb.SheetNames).toContain('胜任度评分');
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets['胜任度评分']);
+    expect(rows).toHaveLength(1);
+    const headerKeys = Object.keys(rows[0]);
+    expect(headerKeys).toContain('工号');
+    expect(headerKeys).toContain('姓名');
+    expect(headerKeys).toContain('业务能力');
+    expect(headerKeys).toContain('单兵能力');
+    expect(headerKeys).toContain('评分人');
+    expect(headerKeys).toContain('评估日期');
+    expect(headerKeys).toContain('备注');
+    expect(headerKeys).not.toContain('停用维度');
+
+    // 模板行可直接回读导入（往返一致）
+    const mapped = mapAssessmentRows(rows, model);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].scores).toEqual({ 'business': 3, 'individual': 3 });
   });
 });

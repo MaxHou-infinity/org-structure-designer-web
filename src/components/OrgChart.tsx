@@ -7,6 +7,7 @@ import { employeeDeptMap } from '../utils/search';
 import { SearchHighlight, SearchHighlightContext } from './SearchContext';
 import { PositionSummary } from '../utils/analytics';
 import { MatchResult } from '../utils/match';
+import type { CompetencySummary } from '../utils/competency';
 
 interface OrgChartProps {
   departments: Department[];
@@ -38,6 +39,11 @@ interface OrgChartProps {
   matchStates?: MatchResult[];
   onSetPositionHeadcount?: (deptId: string, positionId: string, headcount: number) => void;
   onRemoveAssignment?: (empId: string) => void;
+  // —— v2.2.0 胜任度三信号（透传给 DepartmentCard；布局/布局算法不变）——
+  /** 胜任度汇总（computeCompetencyStates 输出，key = Employee.id；缺省 = 全员「未评」灰环） */
+  competencySummaries?: Map<string, CompetencySummary>;
+  /** 点击员工标签胜任度环 / 右键「查看胜任度」→ 打开胜任度详情 */
+  onOpenCompetencyDetail?: (empId: string) => void;
 }
 
 interface TreeNode {
@@ -269,6 +275,8 @@ const renderTreeRecursive = (
   matchStates: MatchResult[],
   onSetPositionHeadcount: (deptId: string, positionId: string, headcount: number) => void,
   onRemoveAssignment: (empId: string) => void,
+  competencySummaries?: Map<string, CompetencySummary>,
+  onOpenCompetencyDetail?: (empId: string) => void,
 ): React.ReactNode => {
   // 扁平化所有节点，全部相对 canvasRef 绝对定位（全局坐标）
   const flat = flattenTreeNodes(nodes);
@@ -302,6 +310,8 @@ const renderTreeRecursive = (
             matchStates={matchStates}
             onSetPositionHeadcount={onSetPositionHeadcount}
             onRemoveAssignment={onRemoveAssignment}
+            competencySummaries={competencySummaries}
+            onOpenCompetencyDetail={onOpenCompetencyDetail}
           />
         </div>
       ))}
@@ -413,6 +423,8 @@ export function OrgChart({
   matchStates = [],
   onSetPositionHeadcount,
   onRemoveAssignment,
+  competencySummaries,
+  onOpenCompetencyDetail,
 }: OrgChartProps) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [dragData, setDragData] = useState<{ type: 'employee' | 'department'; data: Employee | Department } | null>(null);
@@ -854,6 +866,8 @@ export function OrgChart({
               matchStates,
               onSetPositionHeadcount ?? (() => {}),
               onRemoveAssignment ?? (() => {}),
+              competencySummaries,
+              onOpenCompetencyDetail,
             )}
           </div>
         ) : (

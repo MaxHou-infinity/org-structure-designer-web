@@ -6,6 +6,14 @@ import {
   Department,
   Position,
   ScenarioCanvas,
+  Assessment,
+  AssignmentStatus,
+  AssignmentType,
+  CompetencyDimensionDef,
+  CompetencyModel,
+  PositionAssignment,
+  DEFAULT_COMPETENCY_MODEL,
+  COMPETENCY_SCALE,
 } from '../types';
 import { DEFAULT_LEVELS } from './levels';
 
@@ -18,8 +26,8 @@ import { DEFAULT_LEVELS } from './levels';
  * - 浏览器版持久化到 localStorage（自动保存），Tauri 版可另存为 .orgproj。
  */
 
-/** 数据模型版本（用于迁移）。v2.1.1 升为 2：引入岗位（Position）实体。 */
-export const PROJECT_VERSION = 2;
+/** 数据模型版本（用于迁移）。v2.1.1 升为 2：引入岗位（Position）实体。v2.2.0 升为 3：胜任度引擎（CompetencyModel / Assessment / PositionAssignment）。 */
+export const PROJECT_VERSION = 3;
 
 /** localStorage key */
 export const PROJECT_STORAGE_KEY = 'org-designer.project.v2';
@@ -32,22 +40,28 @@ export function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** 空场景快照（初始场景用） */
+/** 空场景快照（初始场景用）。v2.2.0：补齐胜任度三字段（默认模型深拷贝 + 两张空表）。 */
 export function emptyScenarioSnapshot(): {
   departments: Department[];
   allEmployeesFlat: Employee[];
   levelConfigs: LevelConfig[];
   canvas: ScenarioCanvas;
+  competencyModel: CompetencyModel;
+  assessments: Assessment[];
+  positionAssignments: PositionAssignment[];
 } {
   return {
     departments: [],
     allEmployeesFlat: [],
     levelConfigs: DEFAULT_LEVELS.map((c) => ({ ...c })),
     canvas: { zoom: 100 },
+    competencyModel: structuredClone(DEFAULT_COMPETENCY_MODEL),
+    assessments: [],
+    positionAssignments: [],
   };
 }
 
-/** 用当前快照创建一个场景 */
+/** 用当前快照创建一个场景（v2.2.0：快照缺三字段时按缺省回退，兼容旧调用方） */
 export function createScenario(
   name: string,
   snapshot: {
@@ -55,6 +69,9 @@ export function createScenario(
     allEmployeesFlat: Employee[];
     levelConfigs: LevelConfig[];
     canvas: ScenarioCanvas;
+    competencyModel?: CompetencyModel;
+    assessments?: Assessment[];
+    positionAssignments?: PositionAssignment[];
   },
   now: string = new Date().toISOString(),
 ): Scenario {
@@ -67,10 +84,15 @@ export function createScenario(
     allEmployeesFlat: snapshot.allEmployeesFlat,
     levelConfigs: snapshot.levelConfigs,
     canvas: snapshot.canvas,
+    competencyModel: snapshot.competencyModel
+      ? structuredClone(snapshot.competencyModel)
+      : structuredClone(DEFAULT_COMPETENCY_MODEL),
+    assessments: snapshot.assessments ? structuredClone(snapshot.assessments) : [],
+    positionAssignments: snapshot.positionAssignments ? structuredClone(snapshot.positionAssignments) : [],
   };
 }
 
-/** 复制一个场景（生成「{原名} 副本」） */
+/** 复制一个场景（生成「{原名} 副本」）。v2.2.0：胜任度三字段一并深拷贝，不共享引用。 */
 export function cloneScenario(scenario: Scenario, now: string = new Date().toISOString()): Scenario {
   return {
     id: uid('scene'),
@@ -81,6 +103,9 @@ export function cloneScenario(scenario: Scenario, now: string = new Date().toISO
     allEmployeesFlat: structuredClone(scenario.allEmployeesFlat),
     levelConfigs: scenario.levelConfigs.map((c) => ({ ...c })),
     canvas: { ...scenario.canvas },
+    competencyModel: structuredClone(scenario.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
+    assessments: structuredClone(scenario.assessments ?? []),
+    positionAssignments: structuredClone(scenario.positionAssignments ?? []),
   };
 }
 
@@ -192,6 +217,123 @@ function sanitizeLevelConfigs(list: unknown[]): LevelConfig[] {
   return out.length > 0 ? out : DEFAULT_LEVELS.map((c) => ({ ...c }));
 }
 
+// —— v2.2.0：胜任度三张表 sanitize（沿用逐条校验、非法丢单条、缺省回退风格） ——
+
+/** 维度 key 合法形式（AI 稳定 ID + 结构化枚举）：小写字母开头，仅小写字母/数字/下划线。 */
+const DIMENSION_KEY_RE = /^[a-z][a-z0-9_]*$/;
+
+/** 清洗场景级胜任度模型：维度逐条校验，非法丢单条；结果为空 → 回退默认预设深拷贝。 */
+function sanitizeCompetencyModel(raw: unknown): CompetencyModel {
+  if (!raw || typeof raw !== 'object') return structuredClone(DEFAULT_COMPETENCY_MODEL);
+  const model = raw as Record<string, unknown>;
+  const list = Array.isArray(model.dimensions) ? model.dimensions : [];
+  const dimensions: CompetencyDimensionDef[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const d = item as Record<string, unknown>;
+    if (typeof d.key !== 'string' || !DIMENSION_KEY_RE.test(d.key)) continue;
+    if (typeof d.label !== 'string') continue;
+    if (typeof d.definition !== 'string') continue;
+    if (typeof d.weight !== 'number' || !Number.isFinite(d.weight) || d.weight < 0) continue;
+    if (d.group !== 'leadership' && d.group !== 'staff') continue;
+    if (typeof d.order !== 'number' || !Number.isInteger(d.order)) continue;
+    if (typeof d.enabled !== 'boolean') continue;
+    const dim: CompetencyDimensionDef = {
+      key: d.key,
+      label: d.label,
+      definition: d.definition,
+      weight: d.weight,
+      group: d.group,
+      order: d.order,
+      enabled: d.enabled,
+    };
+    if (typeof d.builtin === 'boolean') dim.builtin = d.builtin;
+    dimensions.push(dim);
+  }
+  return dimensions.length > 0 ? { dimensions } : structuredClone(DEFAULT_COMPETENCY_MODEL);
+}
+
+/** 清洗评估长表：必填缺失/score 非 1..5 整数/dimension 非法形式/assessorRole 非 supervisor|hrbp → 丢单条；
+ *  scale 强制 {min:1,max:5}；requirement 非 1..5 → 回填 3；source 非法 → manual。
+ *  注意：dimension 指向「当前模型不存在的 key」（orphan）【不丢】，由运行时 lookup 降级。 */
+function sanitizeAssessments(raw: unknown, now: string): Assessment[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const out: Assessment[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const a = item as Record<string, unknown>;
+    if (typeof a.id !== 'string' || !a.id) continue;
+    if (typeof a.employeeId !== 'string' || !a.employeeId) continue;
+    if (typeof a.assessedAt !== 'string' || !a.assessedAt) continue;
+    const score = a.score;
+    if (
+      typeof score !== 'number' ||
+      !Number.isInteger(score) ||
+      score < COMPETENCY_SCALE.min ||
+      score > COMPETENCY_SCALE.max
+    ) continue;
+    if (typeof a.dimension !== 'string' || !DIMENSION_KEY_RE.test(a.dimension)) continue;
+    // MVP 只认 supervisor/hrbp 有效（self/peer/subordinate 枚举留位，不参与录入/算法）
+    if (a.assessorRole !== 'supervisor' && a.assessorRole !== 'hrbp') continue;
+    const req = a.requirement;
+    const requirement =
+      typeof req === 'number' && Number.isFinite(req) && req >= COMPETENCY_SCALE.min && req <= COMPETENCY_SCALE.max
+        ? req
+        : 3;
+    const assessment: Assessment = {
+      id: a.id,
+      employeeId: a.employeeId,
+      dimension: a.dimension,
+      score,
+      scale: COMPETENCY_SCALE,
+      requirement,
+      assessorRole: a.assessorRole,
+      assessedAt: a.assessedAt,
+      source: a.source === 'import' ? 'import' : 'manual',
+      createdAt: typeof a.createdAt === 'string' ? a.createdAt : now,
+      updatedAt: typeof a.updatedAt === 'string' ? a.updatedAt : now,
+    };
+    if (typeof a.positionId === 'string') assessment.positionId = a.positionId;
+    if (typeof a.assessorId === 'string') assessment.assessorId = a.assessorId;
+    if (typeof a.note === 'string') assessment.note = a.note;
+    out.push(assessment);
+  }
+  return out;
+}
+
+/** 清洗人岗时态关系表：id/employeeId/positionId/startDate 缺失 → 丢单条；
+ *  type/status 非法 → 回退 primary/active（沿用 sanitizePositions 缺省回退风格）。 */
+function sanitizePositionAssignments(raw: unknown, now: string): PositionAssignment[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const out: PositionAssignment[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const a = item as Record<string, unknown>;
+    if (typeof a.id !== 'string' || !a.id) continue;
+    if (typeof a.employeeId !== 'string' || !a.employeeId) continue;
+    if (typeof a.positionId !== 'string' || !a.positionId) continue;
+    if (typeof a.startDate !== 'string' || !a.startDate) continue;
+    const type: AssignmentType = a.type === 'secondary' ? 'secondary' : 'primary';
+    const status: AssignmentStatus =
+      a.status === 'ended' ? 'ended' : a.status === 'not_competent' ? 'not_competent' : 'active';
+    const assignment: PositionAssignment = {
+      id: a.id,
+      employeeId: a.employeeId,
+      positionId: a.positionId,
+      type,
+      startDate: a.startDate,
+      status,
+      createdAt: typeof a.createdAt === 'string' ? a.createdAt : now,
+      updatedAt: typeof a.updatedAt === 'string' ? a.updatedAt : now,
+    };
+    if (typeof a.endDate === 'string') assignment.endDate = a.endDate;
+    if (typeof a.confirmedBy === 'string') assignment.confirmedBy = a.confirmedBy;
+    if (typeof a.confirmedAt === 'string') assignment.confirmedAt = a.confirmedAt;
+    out.push(assignment);
+  }
+  return out;
+}
+
 function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario | null {
   const now = new Date().toISOString();
   const id = typeof raw.id === 'string' ? raw.id : uid('scene');
@@ -221,6 +363,10 @@ function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario
     levelConfigs,
     canvas,
     positions: Array.isArray(raw.positions) ? sanitizePositions(raw.positions, now) : [],
+    // —— v2.2.0：胜任度三张表（缺省回退，不丢旧文件） ——
+    competencyModel: sanitizeCompetencyModel(raw.competencyModel),
+    assessments: sanitizeAssessments(raw.assessments, now),
+    positionAssignments: sanitizePositionAssignments(raw.positionAssignments, now),
   };
 }
 
@@ -232,9 +378,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v1 → v2：引入岗位。旧部门级 headcount>0 派生「默认岗位」，部门内非虚拟员工自动套岗；
   // dept.headcount 保留为冗余派生（= 部门直属岗位编制之和），保证报告/诊断数字与迁移前一致。
   1: (data) => migrateV1ToV2(data),
+  // v2 → v3：胜任度引擎。competencyModel 缺省回填默认预设 + 两张新表空数组占位（positionAssignments 不回填，不造数据）。
+  2: (data) => migrateV2ToV3(data),
 };
 
-/** 将任意版本数据迁移到当前 PROJECT_VERSION（只读输入，返回 v2 结构；未知版本交由 sanitize 尽力处理）。 */
+/** 将任意版本数据迁移到当前 PROJECT_VERSION（只读输入，返回 v3 结构；未知版本交由 sanitize 尽力处理）。 */
 function migrateToCurrent(data: Record<string, unknown>): Record<string, unknown> {
   let v = typeof data.version === 'number' ? data.version : 1;
   let out = data;
@@ -307,6 +455,27 @@ function migrateDepts(depts: unknown[], allPositions: Record<string, unknown>[],
     const children = Array.isArray(d.children) ? d.children : [];
     migrateDepts(children, allPositions, now);
   }
+}
+
+/**
+ * v2 → v3（幂等 + 无损 + 不造数据）：
+ * 1) competencyModel 缺省回填默认预设（深层拷贝，避免共享引用）；有维度即保留；
+ * 2) assessments 空数组占位（有值即保留）；
+ * 3) positionAssignments 空数组占位、【不回填】——避免伪造 startDate，也避免 project.ts ↔ assignment.ts 循环依赖；
+ *    v2 旧数据仍以 Employee.positionId + 虚拟副本投影为 active 真值；前向写操作时才产生 assignment 记录。
+ * 不触碰 headcount / 职级 / positionId / targetLevel 等既有字段 → 空岗率 / 缺口 / 匹配三态 / 职级差距与 v2 完全一致。
+ */
+function migrateV2ToV3(data: Record<string, unknown>): Record<string, unknown> {
+  const scenarios = Array.isArray(data.scenarios) ? data.scenarios : [];
+  for (const sRaw of scenarios) {
+    const s = sRaw as Record<string, unknown>;
+    if (!s.competencyModel || !Array.isArray((s.competencyModel as { dimensions?: unknown }).dimensions)) {
+      s.competencyModel = structuredClone(DEFAULT_COMPETENCY_MODEL);
+    }
+    s.assessments = Array.isArray(s.assessments) ? s.assessments : [];
+    s.positionAssignments = Array.isArray(s.positionAssignments) ? s.positionAssignments : [];
+  }
+  return data;
 }
 
 /**

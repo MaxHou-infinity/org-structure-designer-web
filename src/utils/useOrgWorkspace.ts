@@ -5,6 +5,10 @@ import {
   Employee,
   Department,
   ScenarioCanvas,
+  Assessment,
+  CompetencyModel,
+  PositionAssignment,
+  DEFAULT_COMPETENCY_MODEL,
 } from '../types';
 import {
   createProject,
@@ -57,17 +61,26 @@ export function useOrgWorkspace() {
     {
       departments: initialScenario.departments,
       allEmployeesFlat: initialScenario.allEmployeesFlat,
+      assessments: initialScenario.assessments ?? [],
+      competencyModel: structuredClone(initialScenario.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
+      positionAssignments: initialScenario.positionAssignments ?? [],
     },
     50,
   );
   const { state: live, set: setSnapshot, replace: replaceSnapshot, undo, redo, canUndo, canRedo } = history;
-  const { departments, allEmployeesFlat } = live;
+  const { departments, allEmployeesFlat, assessments, competencyModel, positionAssignments } = live;
   const departmentsRef = useRef(departments);
   const employeesRef = useRef(allEmployeesFlat);
+  const assessmentsRef = useRef(assessments);
+  const competencyModelRef = useRef(competencyModel);
+  const positionAssignmentsRef = useRef(positionAssignments);
   useEffect(() => {
     departmentsRef.current = departments;
     employeesRef.current = allEmployeesFlat;
-  }, [departments, allEmployeesFlat]);
+    assessmentsRef.current = assessments;
+    competencyModelRef.current = competencyModel;
+    positionAssignmentsRef.current = positionAssignments;
+  }, [departments, allEmployeesFlat, assessments, competencyModel, positionAssignments]);
 
   const [zoom, setZoomState] = useState<number>(initialScenario.canvas.zoom ?? 100);
   const zoomRef = useRef(zoom);
@@ -95,6 +108,9 @@ export function useOrgWorkspace() {
               ...s,
               departments: departmentsRef.current,
               allEmployeesFlat: employeesRef.current,
+              assessments: assessmentsRef.current,
+              competencyModel: competencyModelRef.current,
+              positionAssignments: positionAssignmentsRef.current,
               levelConfigs: levelConfigsRef.current,
               canvas: { ...s.canvas, zoom: zoomRef.current },
               updatedAt: now,
@@ -120,7 +136,7 @@ export function useOrgWorkspace() {
     return projectRef.current;
   }, [patchCurrentScenario]);
 
-  // 自动保存：任何会改 departments/allEmployeesFlat/zoom/levelConfigs 的动作 → debounce 800ms 落盘
+  // 自动保存：任何会改 departments/allEmployeesFlat/zoom/levelConfigs/胜任度三字段 的动作 → debounce 800ms 落盘
   useEffect(() => {
     if (firstRun.current) {
       firstRun.current = false;
@@ -136,7 +152,7 @@ export function useOrgWorkspace() {
       if (dirtyTimer.current) clearTimeout(dirtyTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [departments, allEmployeesFlat, zoom, levelConfigs]);
+  }, [departments, allEmployeesFlat, zoom, levelConfigs, assessments, competencyModel, positionAssignments]);
 
   /** —— 快照更新器（历史感知） —— */
 
@@ -154,6 +170,39 @@ export function useOrgWorkspace() {
     [setSnapshot],
   );
 
+  /** v2.2.0：评估长表（原始事实）更新器（历史感知，支持 fn|value） */
+  const setAssessments = useCallback(
+    (next: Assessment[] | ((prev: Assessment[]) => Assessment[])) => {
+      setSnapshot((prev) => ({
+        ...prev,
+        assessments: typeof next === 'function' ? next(prev.assessments) : next,
+      }));
+    },
+    [setSnapshot],
+  );
+
+  /** v2.2.0：胜任度模型更新器（历史感知，支持 fn|value） */
+  const setCompetencyModel = useCallback(
+    (next: CompetencyModel | ((prev: CompetencyModel) => CompetencyModel)) => {
+      setSnapshot((prev) => ({
+        ...prev,
+        competencyModel: typeof next === 'function' ? next(prev.competencyModel) : next,
+      }));
+    },
+    [setSnapshot],
+  );
+
+  /** v2.2.0：人岗时态关系表更新器（历史感知，支持 fn|value） */
+  const setPositionAssignments = useCallback(
+    (next: PositionAssignment[] | ((prev: PositionAssignment[]) => PositionAssignment[])) => {
+      setSnapshot((prev) => ({
+        ...prev,
+        positionAssignments: typeof next === 'function' ? next(prev.positionAssignments) : next,
+      }));
+    },
+    [setSnapshot],
+  );
+
   const setBoth = useCallback(
     (fn: (prev: HistorySnapshot) => HistorySnapshot) => {
       setSnapshot(fn);
@@ -161,10 +210,24 @@ export function useOrgWorkspace() {
     [setSnapshot],
   );
 
-  /** 载入一个场景快照到实时态（重置历史） */
+  /** 载入一个场景快照到实时态（重置历史）。v2.2.0：三字段与 live 快照一一对应。 */
   const loadSnapshot = useCallback(
-    (snap: { departments: Department[]; allEmployeesFlat: Employee[]; levelConfigs: LevelConfig[]; canvas: ScenarioCanvas }) => {
-      replaceSnapshot({ departments: snap.departments, allEmployeesFlat: snap.allEmployeesFlat });
+    (snap: {
+      departments: Department[];
+      allEmployeesFlat: Employee[];
+      levelConfigs: LevelConfig[];
+      canvas: ScenarioCanvas;
+      assessments: Assessment[];
+      competencyModel: CompetencyModel;
+      positionAssignments: PositionAssignment[];
+    }) => {
+      replaceSnapshot({
+        departments: snap.departments,
+        allEmployeesFlat: snap.allEmployeesFlat,
+        assessments: snap.assessments,
+        competencyModel: snap.competencyModel,
+        positionAssignments: snap.positionAssignments,
+      });
       setZoomState(snap.canvas.zoom ?? 100);
       updateLevelConfigs(snap.levelConfigs);
     },
@@ -188,6 +251,9 @@ export function useOrgWorkspace() {
         allEmployeesFlat: target.allEmployeesFlat,
         levelConfigs: target.levelConfigs,
         canvas: target.canvas,
+        assessments: target.assessments ?? [],
+        competencyModel: structuredClone(target.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
+        positionAssignments: target.positionAssignments ?? [],
       });
     },
     [flushCurrent, loadSnapshot],
@@ -201,6 +267,9 @@ export function useOrgWorkspace() {
         allEmployeesFlat: employeesRef.current,
         levelConfigs: levelConfigsRef.current,
         canvas: { zoom: zoomRef.current },
+        assessments: assessmentsRef.current,
+        competencyModel: competencyModelRef.current,
+        positionAssignments: positionAssignmentsRef.current,
       };
       const created = createScenario(name, snap);
       const next: ProjectFile = {
@@ -270,6 +339,9 @@ export function useOrgWorkspace() {
           allEmployeesFlat: remaining[0].allEmployeesFlat,
           levelConfigs: remaining[0].levelConfigs,
           canvas: remaining[0].canvas,
+          assessments: remaining[0].assessments ?? [],
+          competencyModel: structuredClone(remaining[0].competencyModel ?? DEFAULT_COMPETENCY_MODEL),
+          positionAssignments: remaining[0].positionAssignments ?? [],
         });
       }
       return true;
@@ -311,16 +383,25 @@ export function useOrgWorkspace() {
         allEmployeesFlat: first.allEmployeesFlat,
         levelConfigs: first.levelConfigs,
         canvas: first.canvas,
+        assessments: first.assessments ?? [],
+        competencyModel: structuredClone(first.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
+        positionAssignments: first.positionAssignments ?? [],
       });
       return true;
     },
     [loadSnapshot],
   );
 
-  /** 清空当前工作区（重置，保留职级配置偏好） */
+  /** 清空当前工作区（重置，保留职级配置偏好）。v2.2.0：三字段重置为 空评估 / 默认模型 / 空时态表。 */
   const resetWorkspace = useCallback(() => {
     flushCurrent();
-    replaceSnapshot({ departments: [], allEmployeesFlat: [] });
+    replaceSnapshot({
+      departments: [],
+      allEmployeesFlat: [],
+      assessments: [],
+      competencyModel: structuredClone(DEFAULT_COMPETENCY_MODEL),
+      positionAssignments: [],
+    });
     setZoomState(100);
   }, [flushCurrent, replaceSnapshot]);
 
@@ -332,12 +413,18 @@ export function useOrgWorkspace() {
     setZoom: setZoomState,
     departments,
     allEmployeesFlat,
+    assessments,
+    competencyModel,
+    positionAssignments,
     levelConfigs,
     saveState,
     lastSavedAt,
 
     setDepartments,
     setAllEmployeesFlat,
+    setAssessments,
+    setCompetencyModel,
+    setPositionAssignments,
     setBoth,
 
     undo,

@@ -1,4 +1,4 @@
-import { Employee, Department, OrgTemplate, Position } from '../types';
+import { Employee, Department, OrgTemplate, Position, CompetencyModel } from '../types';
 import type { WorkBook } from 'xlsx';
 import { uid } from './project';
 
@@ -358,6 +358,107 @@ export async function parsePositionExcel(file: File): Promise<PositionImportRow[
   return mapPositionRows(rows);
 }
 
+// ───────────────────────── v2.2.0 胜任度评分导入 ─────────────────────────
+
+/** 评分导入行（一条 = 员工 × 各维度分；employeeKey 为导入侧员工标识，UI 层再解析为内部 employeeId） */
+export interface AssessmentImportRow {
+  /** 员工标识：工号优先，缺省回退姓名（导入侧键，UI 层解析到 Employee.id） */
+  employeeKey: string;
+  /** 维度分：dimension key → 1..5 整数（只含已填维度；未评维度不出现） */
+  scores: Record<string, number>;
+  /** 评分人（批次级人工字段，可追溯） */
+  assessorName?: string;
+  /** 评估日期（用户原样字符串；落库时由 UI 层归一为 ISO） */
+  assessedAt?: string;
+  /** 备注/评分依据（行为锚点引用，可追溯） */
+  note?: string;
+}
+
+/** 评分表非维度元数据列（模板与解析共用白名单；其余列一律视为未知维度列报错，不静默吞） */
+const ASSESSMENT_META_COLUMNS = ['工号', '姓名', '评分人', '评估日期', '备注'] as const;
+
+/**
+ * 评分行 → AssessmentImportRow（独立导出，测试可复用）。
+ * - 维度列 = model 中 enabled 维度的 label → key 映射；未启用维度不参与（软删维度历史走详情，不进导入）。
+ * - 员工标识「工号」或「姓名」至少其一，否则该行报错。
+ * - 维度分非 1..5 整数 / 未知维度列 → 抛 ExcelImportError（kind='invalid-structure'），报错不静默。
+ */
+export function mapAssessmentRows(
+  rows: Record<string, unknown>[],
+  model: CompetencyModel,
+): AssessmentImportRow[] {
+  const enabledDims = model.dimensions.filter((d) => d.enabled);
+  const labelToKey = new Map(enabledDims.map((d) => [d.label, d.key]));
+  const knownColumns = new Set<string>([...ASSESSMENT_META_COLUMNS, ...labelToKey.keys()]);
+
+  return rows.map((row, index) => {
+    const line = index + 2; // 表头在第 1 行，数据从第 2 行起
+    // 未知列（既非元数据列也非已启用维度列）→ 报错不静默（防维度名拼错/结构漂移被静默吞掉）
+    for (const key of Object.keys(row)) {
+      if (!knownColumns.has(key)) {
+        const dimHint = enabledDims.length > 0 ? `；已启用维度列为：${enabledDims.map((d) => d.label).join('、')}` : '';
+        throw new ExcelImportError(
+          'invalid-structure',
+          `评分表第 1 行存在未知列「${key}」：必须是工号/姓名/评分人/评估日期/备注或已启用维度列${dimHint}，请对照示例模板整理后再导入`,
+        );
+      }
+    }
+    const employeeKey = cellString(row['工号']) || cellString(row['姓名']);
+    if (!employeeKey) {
+      throw new ExcelImportError(
+        'invalid-structure',
+        `评分表第 ${line} 行缺少员工标识：工号与姓名均为空，请补充后再导入`,
+      );
+    }
+    const scores: Record<string, number> = {};
+    for (const dim of enabledDims) {
+      const raw = row[dim.label];
+      if (raw === null || raw === undefined || String(raw).trim() === '') continue; // 未评 = 显式留空跳过
+      const value = cellNumber(raw);
+      if (value === undefined || !Number.isInteger(value) || value < 1 || value > 5) {
+        throw new ExcelImportError(
+          'invalid-structure',
+          `评分表第 ${line} 行「${employeeKey}」的「${dim.label}」分数为「${String(raw)}」，必须是 1–5 整数（未评请留空）`,
+        );
+      }
+      scores[dim.key] = value;
+    }
+    const out: AssessmentImportRow = { employeeKey, scores };
+    const assessorName = cellString(row['评分人']);
+    if (assessorName) out.assessorName = assessorName;
+    const assessedAt = cellString(row['评估日期']);
+    if (assessedAt) out.assessedAt = assessedAt;
+    const note = cellString(row['备注']);
+    if (note) out.note = note;
+    return out;
+  });
+}
+
+/** 评分导入必填元数据列（员工标识「工号/姓名」至少其一 + 维度列在 parseAssessmentExcel 内动态校验） */
+const REQUIRED_ASSESSMENT_COLUMNS = ['评分人', '评估日期'] as const;
+
+/**
+ * 解析胜任度评分 Excel：必填列 = 员工标识「工号/姓名」至少其一 + 当前 model enabled 维度列（label 表头）+ 评分人 + 评估日期。
+ * 复用 readAndValidateFile/loadXlsx/cellNumber/cellString/ExcelImportError/文件护栏常量。
+ */
+export async function parseAssessmentExcel(
+  file: File,
+  model: CompetencyModel,
+): Promise<AssessmentImportRow[]> {
+  const enabledLabels = model.dimensions.filter((d) => d.enabled).map((d) => d.label);
+  const rows = await readAndValidateFile(file, [...REQUIRED_ASSESSMENT_COLUMNS, ...enabledLabels]);
+  // 员工标识「工号/姓名」至少其一：两者都缺 → missing-columns（带缺失列名，可行动提示）
+  const present = new Set<string>();
+  for (const row of rows) {
+    for (const key of Object.keys(row)) present.add(key);
+  }
+  const missingIdentifiers = ['工号', '姓名'].filter((col) => !present.has(col));
+  if (missingIdentifiers.length === 2) {
+    throw new ExcelImportError('missing-columns', IMPORT_ERROR_MESSAGES['missing-columns'], ['工号', '姓名']);
+  }
+  return mapAssessmentRows(rows, model);
+}
+
 /** 递归收集全树所有直属岗位（扁平镜像，供 Scenario.positions / analytics 用）。 */
 export function collectAllPositions(depts: Department[]): Position[] {
   let acc: Position[] = [];
@@ -680,4 +781,26 @@ export async function generateSampleOrgTemplate(): Promise<void> {
   const bytes = await buildSampleOrgTemplateBytes();
   const { saveFile } = await import('./tauri');
   await saveFile('组织架构模板.xlsx', bytes, XLSX_MIME);
+}
+
+/**
+ * 构建「胜任度评分」示例模板的 Excel 字节（调用方决定保存方式：Tauri 另存为 / 浏览器下载）。
+ * 沿用 buildSampleEmployeeTemplateBytes 的 workbook 生成模式；维度列按 model 中 enabled 维度动态生成、
+ * 列头为维度 label（停用维度不生成列，保证模板 ↔ parseAssessmentExcel/mapAssessmentRows 往返一致）。
+ */
+export async function buildSampleAssessmentTemplateBytes(model: CompetencyModel): Promise<Uint8Array> {
+  const XLSX = await loadXlsx();
+  const enabledDims = model.dimensions.filter((d) => d.enabled);
+  const sampleRow: Record<string, string> = { '工号': 'E001', '姓名': '张三' };
+  for (const dim of enabledDims) {
+    sampleRow[dim.label] = '3';
+  }
+  sampleRow['评分人'] = 'HRBP 示例';
+  sampleRow['评估日期'] = new Date().toISOString().slice(0, 10);
+  sampleRow['备注'] = '分数为 1–5 整数；未评请留空';
+  const worksheet = XLSX.utils.json_to_sheet([sampleRow]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, '胜任度评分');
+  const out = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+  return new Uint8Array(out as ArrayBuffer);
 }
