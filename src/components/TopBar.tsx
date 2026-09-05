@@ -74,6 +74,7 @@ function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastS
 }
 
 export function TopBar({
+  projectName,
   scenarios,
   currentScenarioId,
   onSwitchScenario,
@@ -124,11 +125,11 @@ export function TopBar({
 
   return (
     <>
-    <header className="h-14 flex items-center justify-between px-5 border-b border-white/40 bg-white/70 backdrop-blur-xl shadow-soft z-20">
+    <header className="workspace-header">
       {/* 左区：品牌 + 项目名 + 场景切换 + 保存状态 */}
-      <div className="flex items-center gap-4 min-w-0">
+      <div className="workspace-context">
         <div className="flex items-center gap-3 shrink-0">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center text-white shadow-md">
+          <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-md">
             <Building2 className="w-5 h-5" />
           </div>
           <div className="leading-tight">
@@ -140,7 +141,8 @@ export function TopBar({
           </div>
         </div>
 
-        <div className="hidden md:flex items-center gap-2 min-w-0">
+        <div className="workspace-save">
+          <span className="text-sm font-medium text-slate-700 truncate max-w-48" title={projectName}>{projectName}</span>
           <SaveIndicator saveState={saveState} lastSavedAt={lastSavedAt} />
         </div>
 
@@ -155,11 +157,15 @@ export function TopBar({
           onManage={onManageScenarios}
         />
 
+      </div>
+      <div className="workspace-toolbar">
+      <nav className="workspace-actions" aria-label="组织编辑">
         {/* 工具模板 子菜单 */}
         <div className="relative" ref={toolsRef}>
           <button
-            onClick={() => setToolsOpen((v) => !v)}
-            className="hidden lg:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white text-sm font-medium shadow-md hover:shadow-lg transition-all"
+            aria-expanded={toolsOpen}
+            onClick={() => { setToolsOpen((v) => !v); setTemplatesOpen(false); }}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-medium hover:bg-indigo-100 transition-all"
           >
             <FileSpreadsheet className="w-4 h-4" />
             工具模板
@@ -167,8 +173,8 @@ export function TopBar({
           </button>
 
           {toolsOpen && (
-            <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp">
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-400">
+            <div className="absolute left-0 top-full mt-2 w-64 rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp">
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-500">
                 下载 Excel 模板
               </div>
               <button
@@ -183,7 +189,7 @@ export function TopBar({
                 </span>
                 <span>
                   <span className="block text-sm font-semibold text-slate-800">员工信息模板</span>
-                  <span className="block text-xs text-slate-400 mt-0.5 leading-snug">含姓名/工号/职级/一~六级部门</span>
+                  <span className="block text-xs text-slate-500 mt-0.5 leading-snug">含姓名/工号/职级/一~六级部门</span>
                 </span>
               </button>
               <button
@@ -198,7 +204,7 @@ export function TopBar({
                 </span>
                 <span>
                   <span className="block text-sm font-semibold text-slate-800">组织架构模板</span>
-                  <span className="block text-xs text-slate-400 mt-0.5 leading-snug">含部门/级别/负责人列</span>
+                  <span className="block text-xs text-slate-500 mt-0.5 leading-snug">含部门/级别/负责人列</span>
                 </span>
               </button>
             </div>
@@ -208,17 +214,18 @@ export function TopBar({
         {/* 行业模板 下拉 */}
         <div className="relative" ref={templatesRef}>
           <button
-            onClick={() => setTemplatesOpen((v) => !v)}
-            className="hidden xl:flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+            aria-expanded={templatesOpen}
+            onClick={() => { setTemplatesOpen((v) => !v); setToolsOpen(false); }}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors"
           >
             <LayoutTemplate className="w-4 h-4" />
             行业模板
             <ChevronDown className={`w-4 h-4 transition-transform ${templatesOpen ? 'rotate-180' : ''}`} />
           </button>
           {templatesOpen && (
-            <div className="absolute right-0 top-full mt-2 w-[560px] rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp flex gap-2">
+            <div className="absolute left-0 top-full mt-2 w-[560px] max-w-[calc(100vw-32px)] rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp flex gap-2">
               <div className="flex-1">
-                <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-400">
+                <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-500">
                   一键载入示例组织（移到模板看右侧图例）
                 </div>
                 {INDUSTRY_TEMPLATES.map((t) => (
@@ -230,6 +237,7 @@ export function TopBar({
                       onLoadIndustryTemplate(t.id);
                     }}
                     onMouseEnter={() => setHoverTemplateId(t.id)}
+                    onFocus={() => setHoverTemplateId(t.id)}
                     className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors text-left ${
                       hoverTemplateId === t.id ? 'bg-indigo-50' : 'hover:bg-indigo-50'
                     }`}
@@ -242,26 +250,26 @@ export function TopBar({
                     </span>
                     <span>
                       <span className="block text-sm font-semibold text-slate-800">{t.name}</span>
-                      <span className="block text-xs text-slate-400 mt-0.5 leading-snug">{t.description}</span>
+                      <span className="block text-xs text-slate-500 mt-0.5 leading-snug">{t.description}</span>
                     </span>
                   </button>
                 ))}
               </div>
               {/* 悬停图例 */}
-              <div className="w-56 shrink-0 rounded-xl border border-slate-100 bg-slate-50/60 p-3 overflow-y-auto max-h-80">
+              <div className="hidden sm:block w-56 shrink-0 rounded-xl border border-slate-100 bg-slate-50/60 p-3 overflow-y-auto max-h-80">
                 {(() => {
                   const t = INDUSTRY_TEMPLATES.find((x) => x.id === hoverTemplateId);
-                  if (!t) return <div className="text-[11px] text-slate-400">将光标移到左侧模板查看组织结构图例</div>;
+                  if (!t) return <div className="text-[11px] text-slate-500">将光标移到左侧模板查看组织结构图例</div>;
                   const levels = templateLegend(t.orgTemplates);
                   return (
                     <div>
-                      <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">组织结构图例</div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">组织结构图例</div>
                       <div className="space-y-1">
                         {levels.map((lv) => (
                           <div key={lv.name}>
                             <div className={`text-[12px] font-medium ${lv.level === 1 ? 'text-indigo-600' : 'text-slate-600'} pl-${lv.level === 1 ? '0' : '3'}`}>
                               {lv.level === 1 ? '┌ ' : '└ '}{lv.name}
-                              {lv.leaderName && <span className="text-[10px] text-slate-400"> · {lv.leaderName}</span>}
+                              {lv.leaderName && <span className="text-[10px] text-slate-500"> · {lv.leaderName}</span>}
                             </div>
                             {lv.children.map((c) => (
                               <div key={c} className="text-[11px] text-slate-500 pl-5">└ {c}</div>
@@ -297,10 +305,10 @@ export function TopBar({
           <Target className="w-4 h-4" />
           胜任度
         </button>
-      </div>
+      </nav>
 
       {/* 右区：缩放 + 撤销/重做 + 健康度 + 职级管理 */}
-      <div className="flex items-center gap-2">
+      <nav className="workspace-actions" aria-label="分析与视图">
         <button
           onClick={onOpenSearch}
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors"
@@ -380,6 +388,7 @@ export function TopBar({
           <Settings2 className="w-4 h-4" />
           职级管理
         </button>
+      </nav>
       </div>
     </header>
     </>

@@ -203,10 +203,60 @@ describe('localStorage IO', () => {
 
     expect(persistProject(p)).toBe(true);
     expect(storage.has(PROJECT_STORAGE_KEY)).toBe(true);
+    expect(storage.get(PROJECT_STORAGE_KEY)).toMatch(/^lz16:/);
     const loaded = loadProject();
     expect(loaded).not.toBeNull();
     expect(loaded!.name).toBe('存储项目');
     expect(loaded!.scenarios[0].name).toBe('已改');
+  });
+
+  it('仍可读取历史未压缩的 localStorage 项目', () => {
+    const p = createProject('历史项目');
+    const storage = new Map<string, string>([[PROJECT_STORAGE_KEY, serializeProject(p)]]);
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => void storage.set(k, v),
+      removeItem: (k: string) => void storage.delete(k),
+      clear: () => storage.clear(),
+      key: () => null,
+      length: storage.size,
+    } as unknown as Storage;
+
+    expect(loadProject()?.name).toBe('历史项目');
+  });
+
+  it('大型胜任度项目压缩后可在受限配额内保存并完整恢复', () => {
+    const p = createProject('1000 人大型组织');
+    p.scenarios[0].assessments = Array.from({ length: 6000 }, (_, i) => ({
+      id: `assessment-${i}`,
+      employeeId: `employee-${i % 1000}`,
+      dimension: 'leadership_strategy',
+      score: 4,
+      scale: { min: 1, max: 5 },
+      requirement: 3,
+      assessorRole: 'supervisor' as const,
+      assessedAt: '2026-09-05T00:00:00.000Z',
+      source: 'manual' as const,
+      createdAt: '2026-09-05T00:00:00.000Z',
+      updatedAt: '2026-09-05T00:00:00.000Z',
+    }));
+    const storage = new Map<string, string>();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        if (v.length > 500_000) throw new DOMException('Quota exceeded', 'QuotaExceededError');
+        storage.set(k, v);
+      },
+      removeItem: (k: string) => void storage.delete(k),
+      clear: () => storage.clear(),
+      key: () => null,
+      length: storage.size,
+    } as unknown as Storage;
+
+    expect(serializeProject(p).length).toBeGreaterThan(1_000_000);
+    expect(persistProject(p)).toBe(true);
+    expect(storage.get(PROJECT_STORAGE_KEY)!.length).toBeLessThan(500_000);
+    expect(loadProject()?.scenarios[0].assessments).toHaveLength(6000);
   });
 });
 

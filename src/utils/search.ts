@@ -156,3 +156,17 @@ export function employeeDeptMap(depts: Department[], empIds: string[]): Map<stri
   walk(depts);
   return map;
 }
+
+
+/** 搜索命中的成员必须可见；清除搜索后保留用户原先的展开选择。 */
+export function expandedMembersForSearch(depts: Department[], expanded: ReadonlySet<string>, employeeIds: ReadonlySet<string>): Set<string> {
+  const result = new Set(expanded);
+  const walk = (list: Department[]) => {
+    for (const dept of list) {
+      if (dept.employees.some((emp) => employeeIds.has(emp.id))) result.add(dept.id);
+      walk(dept.children);
+    }
+  };
+  if (employeeIds.size) walk(depts);
+  return result;
+}

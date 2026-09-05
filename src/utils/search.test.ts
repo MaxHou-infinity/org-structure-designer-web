@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { searchOrg, expandDepartments, buildParentMap } from './search';
+import { searchOrg, expandDepartments, buildParentMap, expandedMembersForSearch } from './search';
 import { Department, Employee } from '../types';
 
 function emp(id: string, name: string, employeeId: string, level = 'L1.1'): Employee {
@@ -100,4 +100,12 @@ describe('expandDepartments（展开祖先链，P0-2）', () => {
     const tree = build();
     expect(expandDepartments(tree, new Set())).toBe(tree);
   });
+});
+
+
+it('搜索展开命中成员的容器，清除搜索不污染手动展开状态', () => {
+  const tree = [dept('a', 'A', 1, { children: [dept('b', 'B', 2, { employees: [emp('e', '测试', 'E001')] })] })];
+  const manual = new Set(['a']);
+  expect([...expandedMembersForSearch(tree, manual, new Set(['e']))]).toEqual(['a', 'b']);
+  expect([...expandedMembersForSearch(tree, manual, new Set())]).toEqual(['a']);
 });

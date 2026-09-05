@@ -1,9 +1,12 @@
+import { useDialogFocus } from '../utils/useDialogFocus';
+import { exportCanvas } from '../utils/exportCanvas';
 import { useMemo, useRef } from 'react';
 import { ArrowLeft, Printer, Image as ImageIcon } from 'lucide-react';
 import { Department, LevelConfig } from '../types';
 import { APP_VERSION } from '../version';
 import {
   computeHealthReport,
+  deptHeadcount,
   collectAllSuggestions,
   HEALTH_STATUS_LABEL,
   SuggestionSeverity,
@@ -55,7 +58,7 @@ function ReportNode({ dept }: { dept: Department }) {
         {dept.leaderName && <div className="text-xs text-slate-500 mt-0.5">负责人 · {dept.leaderName}</div>}
         <div className="text-xs text-slate-400 mt-1">
           {dept.employees.length} 人
-          {dept.headcount != null ? ` / 编制 ${dept.headcount}` : ''}
+          {deptHeadcount(dept) != null ? ` / 编制 ${deptHeadcount(dept)}` : ''}
         </div>
       </div>
       {dept.children.length > 0 && (
@@ -127,6 +130,8 @@ export function DiagnosticReport({
     [open],
   );
 
+  const dialogRef = useDialogFocus(open, onClose);
+
   if (!open) return null;
 
   const flat = flattenForDetail(departments);
@@ -139,13 +144,7 @@ export function DiagnosticReport({
   const handleExportPng = async () => {
     if (!reportRef.current) return;
     try {
-      const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(reportRef.current, {
-        backgroundColor: '#FFFFFF',
-        scale: 2,
-        logging: false,
-        useCORS: true,
-      });
+      const canvas = await exportCanvas(reportRef.current);
       const dataUrl = canvas.toDataURL('image/png');
       const base64 = dataUrl.split(',')[1];
       const binary = atob(base64);
@@ -161,7 +160,7 @@ export function DiagnosticReport({
   };
 
   return (
-    <div className="fixed inset-0 z-[90] bg-white/95 backdrop-blur-lg overflow-y-auto">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="诊断报告" tabIndex={-1} className="fixed inset-0 z-[90] bg-white/95 backdrop-blur-lg overflow-y-auto">
       {/* 顶部工具条（打印时隐藏） */}
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-100 px-6 py-3 flex items-center justify-between no-print">
         <div className="flex items-center gap-3">
@@ -230,7 +229,7 @@ export function DiagnosticReport({
               <div className={`text-2xl font-bold ${report.totals.totalGap == null ? 'text-slate-400' : report.totals.totalGap > 0 ? 'text-amber-600' : report.totals.totalGap < 0 ? 'text-red-600' : 'text-slate-900'}`}>
                 {report.totals.totalGap == null ? '未配置' : report.totals.totalGap > 0 ? `+${report.totals.totalGap}` : report.totals.totalGap}
               </div>
-              <div className="text-xs text-slate-400 mt-1">{report.totals.totalGap == null ? '未配置编制，无法计算缺口' : '正=空岗 负=超编'}</div>
+              <div className="text-xs text-slate-400 mt-1">{report.totals.totalGap == null ? '未配置编制，无法计算缺口' : '仅已配置部门；正=空岗，负=超编'}</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">月人力成本</div>
@@ -297,7 +296,7 @@ export function DiagnosticReport({
 
         {/* 部门明细表 */}
         <section className="report-section">
-          <h2 className="text-base font-bold text-slate-900 mb-3">部门明细</h2>
+          <h2 className="text-base font-bold text-slate-900 mb-3">部门明细（人数、编制含下级；职级分布为直属人员）</h2>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
@@ -312,6 +311,7 @@ export function DiagnosticReport({
             </thead>
             <tbody>
               {flat.map((d) => {
+                const metric = report.l3.find((row) => row.deptId === d.id);
                 const dist = Object.entries(
                   d.employees.reduce<Record<string, number>>((agg, e) => {
                     agg[e.level] = (agg[e.level] || 0) + 1;
@@ -328,10 +328,10 @@ export function DiagnosticReport({
                     </td>
                     <td className="py-2 text-slate-500">L{d.level}</td>
                     <td className="py-2 text-slate-600">{d.leaderName || '—'}</td>
-                    <td className="py-2 text-right text-slate-700">{d.employees.length}</td>
-                    <td className="py-2 text-right text-slate-600">{d.headcount ?? '—'}</td>
+                    <td className="py-2 text-right text-slate-700">{metric?.actual ?? 0}</td>
+                    <td className="py-2 text-right text-slate-600">{metric?.headcount ?? '—'}</td>
                     <td className="py-2 text-right text-slate-600">
-                      {d.headcount == null ? '—' : (d.headcount - d.employees.length)}
+                      {metric?.gap ?? '—'}
                     </td>
                     <td className="py-2 text-slate-500">{dist || '—'}</td>
                   </tr>

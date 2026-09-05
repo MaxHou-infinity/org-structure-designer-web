@@ -9,7 +9,7 @@ describe('COMPETENCY_STYLE / COMPETENCY_LABEL', () => {
     expect(COMPETENCY_LABEL).toMatchObject({
       healthy: '胜任',
       warn: '待提升',
-      danger: '不胜任',
+      danger: '待复核',
       unrated: '未评分',
     });
   });

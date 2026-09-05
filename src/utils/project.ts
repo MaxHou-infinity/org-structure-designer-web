@@ -16,6 +16,7 @@ import {
   COMPETENCY_SCALE,
 } from '../types';
 import { DEFAULT_LEVELS } from './levels';
+import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
 
 /**
  * 项目 / 场景 / .orgproj 数据层（纯函数 + localStorage IO）。
@@ -31,6 +32,9 @@ export const PROJECT_VERSION = 3;
 
 /** localStorage key */
 export const PROJECT_STORAGE_KEY = 'org-designer.project.v2';
+
+/** 自动保存使用压缩格式，避免大型组织与胜任度明细触发 WebView 存储配额。 */
+const COMPRESSED_STORAGE_PREFIX = 'lz16:';
 
 /** 默认场景名 */
 export const DEFAULT_SCENARIO_NAME = '基线';
@@ -536,7 +540,9 @@ export function loadProject(): ProjectFile | null {
   try {
     const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
     if (!raw) return null;
-    return parseProject(raw);
+    if (!raw.startsWith(COMPRESSED_STORAGE_PREFIX)) return parseProject(raw);
+    const decompressed = decompressFromUTF16(raw.slice(COMPRESSED_STORAGE_PREFIX.length));
+    return decompressed ? parseProject(decompressed) : null;
   } catch (error) {
     console.error('加载项目失败:', error);
     return null;
@@ -546,7 +552,11 @@ export function loadProject(): ProjectFile | null {
 export function persistProject(project: ProjectFile): boolean {
   if (typeof localStorage === 'undefined') return true;
   try {
-    localStorage.setItem(PROJECT_STORAGE_KEY, serializeProject(project));
+    const compactJson = JSON.stringify(project);
+    localStorage.setItem(
+      PROJECT_STORAGE_KEY,
+      `${COMPRESSED_STORAGE_PREFIX}${compressToUTF16(compactJson)}`,
+    );
     return true;
   } catch (error) {
     console.error('保存项目失败:', error);

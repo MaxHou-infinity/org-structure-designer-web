@@ -1,3 +1,4 @@
+import { exportCanvas } from './utils/exportCanvas';
 import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
@@ -226,6 +227,7 @@ export default function App() {
   // 撤销/重做键盘：Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z（或 Ctrl+Y）重做
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"]')) return;
       // Ctrl/Cmd+F → 应用级搜索
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
@@ -608,8 +610,8 @@ export default function App() {
 
   /** 手动刷新画布：按当前 员工 + 组织模板 重新生成部门树（修复导入后画布不刷新） */
   const handleRefreshCanvas = useCallback(() => {
-    const tree = buildDepartmentTree(allEmployeesRef.current, orgTemplatesRef.current);
-    setDepartments(() => tree);
+    // 画布由当前部门树实时派生；刷新不能拿旧导入表覆盖已编辑的岗位与人员。
+    setDepartments((prev) => [...prev]);
     showToast('画布已刷新');
   }, [setDepartments, showToast]);
 
@@ -645,6 +647,7 @@ export default function App() {
       const tpl = findIndustryTemplate(id);
       if (!tpl) return;
       const built = loadIndustryTemplate(tpl);
+      setOrgTemplates(tpl.orgTemplates);
       setBoth((prev) => ({ ...prev, departments: built.departments, allEmployeesFlat: built.allEmployeesFlat }));
       showToast(`已载入「${tpl.name}」模板`);
     },
@@ -743,8 +746,7 @@ export default function App() {
   const handleExportPng = useCallback(async () => {
     if (!canvasRef.current) return;
     try {
-      const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(canvasRef.current, { backgroundColor: '#F9FAFB', scale: 2, logging: false, useCORS: true });
+      const canvas = await exportCanvas(canvasRef.current, '#F9FAFB');
       const dataUrl = canvas.toDataURL('image/png');
       const base64 = dataUrl.split(',')[1];
       const binary = atob(base64);
@@ -755,7 +757,8 @@ export default function App() {
       else showToast('已取消导出');
     } catch (error) {
       console.error('导出PNG失败:', error);
-      alert('导出PNG失败');
+      const detail = error instanceof Error ? error.message : String(error);
+      alert(`导出PNG失败：${detail}`);
     }
   }, [showToast]);
 
@@ -916,6 +919,7 @@ export default function App() {
 
   const handleOpenReport = useCallback(() => {
     flushCurrent();
+    setHealthOpen(false);
     setReportOpen(true);
   }, [flushCurrent]);
 
@@ -1065,6 +1069,7 @@ export default function App() {
 
   /** 打开差异视图：flushCurrent 确保快照已落盘（S2 实时性）；基线 = 第一个场景，目标 = 当前场景。 */
   const handleOpenScenarioDiff = useCallback(() => {
+    setHealthOpen(false);
     flushCurrent();
     const first = project.scenarios[0];
     const baselineId = first?.id ?? '';
@@ -1166,7 +1171,7 @@ export default function App() {
   }, [redo, showToast]);
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="workspace-shell flex flex-col h-screen">
       <TopBar
         projectName={project.name}
         scenarios={project.scenarios}
@@ -1214,14 +1219,13 @@ export default function App() {
           departments={departments}
           hasData={departments.length > 0}
           hasEmployees={allEmployeesFlat.length > 0}
-          hasOrgTemplate={orgTemplates.length > 0}
+          hasOrgTemplate={departments.length > 0}
           onRefreshCanvas={handleRefreshCanvas}
         />
 
         <main
           ref={mainRef}
-          className="flex-1 overflow-auto p-6"
-          style={{ background: 'radial-gradient(1200px 600px at 20% 0%, rgba(99,102,241,0.06) 0%, rgba(139,92,246,0.05) 45%, transparent 100%), radial-gradient(1000px 500px at 80% 100%, rgba(139,92,246,0.04) 0%, transparent 55%), linear-gradient(135deg, #f8fafc 0%, #eef1f6 100%)' }}
+          className="workspace-canvas flex-1 min-w-0 overflow-auto p-6"
         >
           <OrgChart
             departments={departments}
@@ -1257,7 +1261,7 @@ export default function App() {
       {unassignedEmployees.length > 0 && departments.length > 0 && (
         <button
           onClick={() => setUnassignedOpen(true)}
-          className="fixed top-16 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-50/95 backdrop-blur border border-amber-300/70 text-amber-800 shadow-lg text-sm font-medium hover:bg-amber-100 transition-colors animate-fadeInUp"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-50/95 backdrop-blur border border-amber-300/70 text-amber-800 shadow-lg text-sm font-medium hover:bg-amber-100 transition-colors animate-fadeInUp"
         >
           <AlertTriangle className="w-4 h-4" />
           {unassignedEmployees.length} 名员工未进入架构

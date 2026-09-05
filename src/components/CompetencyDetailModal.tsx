@@ -90,7 +90,7 @@ function BenchmarkNote({
           </div>
           <div>· 职级（B1）：{employee.level} → {b1}</div>
           <div>· 缺省：3（无 B2/B1 时）</div>
-          <div className="mt-1 text-slate-400">Gap = 要求分 − 原始分（正 = 不足）；灯号 = 最差维度 Gap。</div>
+          <div className="mt-1 text-slate-500">Gap = 要求分 − 原始分（正 = 不足）；灯号 = 最差维度 Gap。</div>
         </span>
       )}
     </span>
@@ -125,7 +125,7 @@ export function CompetencyDetailModal({
       maxWidth="max-w-2xl"
     >
       {!employee ? (
-        <div className="py-8 text-center text-sm text-slate-400">未找到员工</div>
+        <div className="py-8 text-center text-sm text-slate-500">未找到员工</div>
       ) : (
         <div className="space-y-4">
           {/* 当前灯 + 评分人 + 时间 */}
@@ -136,19 +136,19 @@ export function CompetencyDetailModal({
             </div>
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-slate-500">
               <span className="inline-flex items-center gap-1.5">
-                <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                <UserCheck className="w-3.5 h-3.5 text-slate-500" />
                 评分人：{summary && summary.assessedBy.length > 0 ? summary.assessedBy.map(resolveName).join(' / ') : '—'}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <CalendarClock className="w-3.5 h-3.5 text-slate-400" />
+                <CalendarClock className="w-3.5 h-3.5 text-slate-500" />
                 最近评分：{formatDateTime(summary?.latestAssessedAt ?? null)}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <Info className="w-3.5 h-3.5 text-slate-400" />
+                <Info className="w-3.5 h-3.5 text-slate-500" />
                 综合阈值：{threshold == null ? '—' : fmt(threshold)}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <Info className="w-3.5 h-3.5 text-slate-400" />
+                <Info className="w-3.5 h-3.5 text-slate-500" />
                 未评维度不计入灯号（灰 = 未评分）
               </span>
             </div>
@@ -160,13 +160,13 @@ export function CompetencyDetailModal({
               分维度分值 / Gap / 基准
             </div>
             {!summary || summary.dimensions.length === 0 ? (
-              <div className="px-4 py-6 text-sm text-slate-400 text-center">
+              <div className="px-4 py-6 text-sm text-slate-500 text-center">
                 暂无评估记录 —— 未评 = 中性灰，不伪装绿/红
               </div>
             ) : (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-slate-400 uppercase tracking-wide border-b border-slate-100">
+                  <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
                     <th className="text-left px-4 py-2 font-medium">维度</th>
                     <th className="text-right px-2 py-2 font-medium">分值</th>
                     <th className="text-center px-2 py-2 font-medium">基准</th>
@@ -179,7 +179,7 @@ export function CompetencyDetailModal({
                     <tr key={d.dimension} className="border-b border-slate-50 last:border-0">
                       <td className="px-4 py-2">
                         <div className="text-xs font-medium text-slate-700">{d.label}</div>
-                        <div className="text-[10px] text-slate-400 max-w-[260px] leading-snug" title={d.definition}>
+                        <div className="text-[10px] text-slate-500 max-w-[260px] leading-snug" title={d.definition}>
                           {d.definition}
                         </div>
                       </td>
@@ -246,11 +246,11 @@ export function CompetencyDetailModal({
           {/* 历史轨迹 */}
           <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card overflow-hidden">
             <div className="px-4 py-2.5 border-b border-slate-100 text-sm font-semibold text-slate-700 flex items-center gap-1.5">
-              <History className="w-4 h-4 text-slate-400" />
+              <History className="w-4 h-4 text-slate-500" />
               历史轨迹（含软删/已删除维度）
             </div>
             {history.length === 0 ? (
-              <div className="px-4 py-5 text-sm text-slate-400 text-center">暂无历史评估</div>
+              <div className="px-4 py-5 text-sm text-slate-500 text-center">暂无历史评估</div>
             ) : (
               <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
                 {history.map((g) => (
@@ -263,7 +263,7 @@ export function CompetencyDetailModal({
                       {!g.orphan && !g.enabled && (
                         <span className="text-[10px] px-1 rounded bg-slate-100 text-slate-500">已停用（不计当前灯号）</span>
                       )}
-                      <span className="text-[10px] text-slate-400">{g.group === 'leadership' ? '领导力' : '员工'}</span>
+                      <span className="text-[10px] text-slate-500">{g.group === 'leadership' ? '领导力' : '员工'}</span>
                     </div>
                     <div className="mt-1 space-y-0.5">
                       {g.records.map((r) => (
@@ -273,9 +273,9 @@ export function CompetencyDetailModal({
                             {r.assessorRole === 'hrbp' ? 'HRBP校准' : '上级原始分'}
                           </span>
                           <span className="tabular-nums font-medium text-slate-700">{r.score}</span>
-                          <span className="text-slate-400">/ 要求 {r.requirement}</span>
+                          <span className="text-slate-500">/ 要求 {r.requirement}</span>
                           {r.assessorId && <span>· {resolveName(r.assessorId)}</span>}
-                          {r.note && <span className="text-slate-400 truncate max-w-[140px]" title={r.note}>· {r.note}</span>}
+                          {r.note && <span className="text-slate-500 truncate max-w-[140px]" title={r.note}>· {r.note}</span>}
                         </div>
                       ))}
                     </div>
@@ -285,7 +285,7 @@ export function CompetencyDetailModal({
             )}
           </div>
 
-          <p className="text-[10px] text-slate-400 leading-snug">
+          <p className="text-[10px] text-slate-500 leading-snug">
             说明：分数与 Gap 由系统按固定档位（≤0 绿 / =1 黄 / ≥2 红）计算；评分人 / 时间 / 备注可追溯，本工具不自动下结论。
           </p>
         </div>

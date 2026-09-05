@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../utils/useDialogFocus';
 import { useRef, useState } from 'react';
 import { X, FileDown, FileUp, Plus, Copy, Trash2, Check, FolderOpen, Pencil } from 'lucide-react';
 import { ProjectFile } from '../types';
@@ -38,6 +39,7 @@ export function ProjectModal({
   onImport,
   onExport,
 }: ProjectModalProps) {
+  const dialogRef = useDialogFocus(open, onClose);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // v2.1.1：场景内联重命名（替代原生 window.prompt）
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -58,7 +60,7 @@ export function ProjectModal({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fadeIn" onClick={onClose} />
-      <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="项目管理" tabIndex={-1} className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-indigo-500/5 to-transparent">
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             项目管理

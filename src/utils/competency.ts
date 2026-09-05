@@ -355,10 +355,12 @@ export function isManager(
   departments: Department[],
   allEmployees: Employee[],
 ): boolean {
+  const employee = allEmployees.find((e) => e.id === employeeId);
+  const matchesId = (id: string | undefined) => Boolean(id && (id === employeeId || id === employee?.employeeId));
   const isLeader = (depts: Department[]): boolean =>
-    depts.some((d) => d.leaderId === employeeId || isLeader(d.children ?? []));
+    depts.some((d) => matchesId(d.leaderId) || isLeader(d.children ?? []));
   const hasDirectReport = allEmployees.some(
-    (e) => !e.isVirtual && e.reportsToEmployeeId === employeeId,
+    (e) => !e.isVirtual && e.id !== employeeId && matchesId(e.reportsToEmployeeId),
   );
   return isLeader(departments) || hasDirectReport;
 }

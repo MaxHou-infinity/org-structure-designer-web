@@ -60,7 +60,7 @@ export const COMPETENCY_STYLE: Record<CompetencyStatus, CompetencyStyle> = {
 export const COMPETENCY_LABEL: Record<CompetencyStatus, string> = {
   healthy: '胜任',
   warn: '待提升',
-  danger: '不胜任',
+  danger: '待复核',
   unrated: '未评分',
 };
 

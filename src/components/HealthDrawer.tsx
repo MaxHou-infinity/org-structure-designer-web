@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../utils/useDialogFocus';
 import { useMemo, useState, Fragment } from 'react';
 import { X, RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, GitCompare, ChevronDown, ChevronRight, Briefcase } from 'lucide-react';
 import { Department, LevelConfig, Scenario } from '../types';
@@ -78,7 +79,7 @@ function DeptStatusDot({ status, headcount }: { status: HealthStatus; headcount:
   if (isHeadcountUnset(headcount)) {
     return (
       <span
-        className="inline-flex items-center gap-1 text-slate-400"
+        className="inline-flex items-center gap-1 text-slate-500"
         title="未配置编制，无法判断空岗/超编"
       >
         <span className="w-2 h-2 rounded-full bg-slate-300" />
@@ -128,7 +129,7 @@ function SpanCardExtra({
   const exceeded = b.max !== null && b.max > thresholds.spanWarnMax;
   return (
     <div className="mt-2">
-      <div className="text-[11px] text-slate-400 leading-snug">
+      <div className="text-[11px] text-slate-500 leading-snug">
         极值 {fmt(b.min)}–{fmt(b.max)} 人 · {b.count} 个有负责人部门
         {widest && (
           <span className={exceeded ? 'text-red-500 font-medium' : 'text-slate-500'}>
@@ -150,7 +151,7 @@ function SpanCardExtra({
         <div className="mt-1.5 max-h-44 overflow-y-auto rounded-xl border border-slate-100 bg-white/60">
           <table className="w-full text-[11px]">
             <thead>
-              <tr className="text-slate-400 border-b border-slate-100 text-left">
+              <tr className="text-slate-500 border-b border-slate-100 text-left">
                 <th className="px-2.5 py-1.5 font-medium">部门</th>
                 <th className="px-2 py-1.5 font-medium text-right">直管</th>
                 <th className="px-2.5 py-1.5 font-medium text-right">判读</th>
@@ -204,7 +205,7 @@ function DepthCardExtra({ m, onFocusDept }: { m: L2Metric; onFocusDept: (deptId:
   const b = m.depthBreakdown;
   if (!b || b.deptCount === 0) return null;
   return (
-    <div className="mt-2 text-[11px] text-slate-400 leading-snug">
+    <div className="mt-2 text-[11px] text-slate-500 leading-snug">
       <div>
         P50={b.p50} 层 · P90={b.p90} 层 · 最深 {b.max} 层 · {b.deptCount} 个部门
       </div>
@@ -235,7 +236,7 @@ function ManagerCardExtra({ m }: { m: L2Metric }) {
       ? Math.round((b.internalManagers / b.nonManagerEmployees) * 100)
       : null;
   return (
-    <div className="mt-2 text-[11px] text-slate-400 leading-snug space-y-0.5">
+    <div className="mt-2 text-[11px] text-slate-500 leading-snug space-y-0.5">
       <div>
         内部 {b.internalManagers} ÷ {b.totalEmployees} 人（含管理者）= {fmt(m.value, '%')}
       </div>
@@ -303,7 +304,7 @@ function ThresholdInput({ label, value, onChange, suffix = '' }: {
           }}
           className="w-16 px-2 py-1 rounded-md border border-slate-200 text-right text-sm focus-ring"
         />
-        {suffix && <span className="text-xs text-slate-400">{suffix}</span>}
+        {suffix && <span className="text-xs text-slate-500">{suffix}</span>}
       </span>
     </label>
   );
@@ -318,7 +319,7 @@ function SuggestionItem({ s }: { s: HealthSuggestion }) {
       </span>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
-          {s.deptName && <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+          {s.deptName && <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />}
           {s.title}
         </div>
         <div className="text-xs text-slate-500 mt-1 leading-snug">{s.detail}</div>
@@ -342,6 +343,7 @@ export function HealthDrawer({
   scenarios,
   onOpenScenarioDiff,
 }: HealthDrawerProps) {
+  const dialogRef = useDialogFocus(open, onClose);
   const configs = useLevelConfigs();
   const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
   const [thresholdsOpen, setThresholdsOpen] = useState(false);
@@ -402,7 +404,7 @@ export function HealthDrawer({
       {/* 轻遮罩 */}
       <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px]" onClick={onClose} />
       {/* 抽屉 */}
-      <aside className="absolute inset-y-0 right-0 w-[640px] max-w-[92vw] glass border-l border-white/40 shadow-2xl flex flex-col animate-slideInRight">
+      <aside ref={dialogRef} role="dialog" aria-modal="true" aria-label="组织健康度" tabIndex={-1} className="absolute inset-y-0 right-0 w-[640px] max-w-[92vw] glass border-l border-white/40 shadow-2xl flex flex-col animate-slideInRight">
         {/* 头部 */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <div>
@@ -410,7 +412,7 @@ export function HealthDrawer({
               <Activity className="w-4 h-4 text-indigo-500" />
               {focusedName ? `${focusedName} · 组织健康度` : '组织健康度'}
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-500 mt-0.5">
               数据快照 · 基于当前场景「{currentScenarioName}」
               {scenarios.length < 2 && ' · 单场景：先复制一个场景再对比'}
             </p>
@@ -439,7 +441,7 @@ export function HealthDrawer({
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-600 transition-colors"
               aria-label="关闭"
             >
               <X className="w-5 h-5" />
@@ -451,7 +453,7 @@ export function HealthDrawer({
           {/* 全局条 */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
               指标随数据实时计算
             </div>
             {focusedName && (
@@ -470,7 +472,7 @@ export function HealthDrawer({
             <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-slate-600">企业阶段基准</span>
-                <span className="text-[10px] text-slate-400">仅供校准，非行业规范</span>
+                <span className="text-[10px] text-slate-500">仅供校准，非行业规范</span>
               </div>
               <div className="flex gap-1.5">
                 {(Object.keys(STAGE_PRESETS) as OrganizationStage[]).map((s) => {
@@ -492,7 +494,7 @@ export function HealthDrawer({
                   );
                 })}
               </div>
-              <p className="text-[11px] text-slate-400 mt-2 leading-snug">
+              <p className="text-[11px] text-slate-500 mt-2 leading-snug">
                 {STAGE_PRESETS[stage].description} · 基准仅供参考，需结合本企业业务阶段校准。
               </p>
             </div>
@@ -525,14 +527,14 @@ export function HealthDrawer({
                   </div>
                   <div className="mt-3">
                     <LevelDistributionBar distribution={d.levelDistribution} configs={configs} />
-                    <div className="mt-1 text-[10px] text-slate-400">
+                    <div className="mt-1 text-[10px] text-slate-500">
                       {Object.keys(d.levelDistribution).length} 个职级
                     </div>
                   </div>
                 </button>
               ))}
               {report.l1.length === 0 && (
-                <div className="text-sm text-slate-400 py-6 text-center w-full">暂无一~级部门</div>
+                <div className="text-sm text-slate-500 py-6 text-center w-full">暂无一~级部门</div>
               )}
             </div>
           </section>
@@ -546,7 +548,7 @@ export function HealthDrawer({
               <button
                 onClick={() => setThresholdsOpen((v) => !v)}
                 className={`flex items-center gap-1 text-[10px] font-medium transition-colors ${
-                  thresholdsOpen ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+                  thresholdsOpen ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-600'
                 }`}
               >
                 <SlidersHorizontal className="w-3 h-3" />
@@ -575,7 +577,7 @@ export function HealthDrawer({
                   )}
                   {m.key === 'depth' && <DepthCardExtra m={m} onFocusDept={onFocusDept} />}
                   {m.key === 'managerRatio' && <ManagerCardExtra m={m} />}
-                  <div className="text-xs text-slate-400 mt-1.5 leading-snug">{m.verdict}</div>
+                  <div className="text-xs text-slate-500 mt-1.5 leading-snug">{m.verdict}</div>
                 </div>
               ))}
             </div>
@@ -586,7 +588,7 @@ export function HealthDrawer({
                   <span className="text-xs font-semibold text-slate-600">阈值配置（存 localStorage）</span>
                   <button
                     onClick={resetThresholds}
-                    className="text-[10px] text-slate-400 hover:text-red-500 transition-colors font-medium"
+                    className="text-[10px] text-slate-500 hover:text-red-500 transition-colors font-medium"
                   >
                     恢复默认
                   </button>
@@ -627,10 +629,10 @@ export function HealthDrawer({
                 <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
                 组织优化建议
               </h3>
-              <span className="text-[10px] text-slate-400">基于健康度自动生成 · {suggestions.length} 条</span>
+              <span className="text-[10px] text-slate-500">基于健康度自动生成 · {suggestions.length} 条</span>
             </div>
             {suggestions.length === 0 ? (
-              <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 text-sm text-slate-400 text-center">
+              <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 text-sm text-slate-500 text-center">
                 暂无优化建议，组织结构较为健康。
               </div>
             ) : (
@@ -649,15 +651,15 @@ export function HealthDrawer({
             </h3>
 
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[10px] text-slate-400">
-                编制人数可在下表直接编辑；成本按职级月成本映射核算（单位 w）
+              <span className="text-[10px] text-slate-500">
+                人数和成本包含下级部门；缺口仅统计已配置编制范围，岗位缺口请展开查看（成本单位：万元/月）
               </span>
             </div>
 
             <div className="overflow-x-auto rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-slate-400 uppercase tracking-wide border-b border-slate-100">
+                  <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
                     <th className="text-left px-4 py-2.5 font-medium">部门</th>
                     <th className="text-right px-2 py-2.5 font-medium">编制</th>
                     <th className="text-right px-2 py-2.5 font-medium">实际</th>
@@ -687,7 +689,7 @@ export function HealthDrawer({
                               {hasPositions ? (
                                 <button
                                   onClick={toggle}
-                                  className="p-0.5 rounded text-slate-400 hover:text-indigo-600"
+                                  className="p-0.5 rounded text-slate-500 hover:text-indigo-600"
                                   title={isExpanded ? '收起岗位' : '展开岗位'}
                                 >
                                   {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -725,11 +727,11 @@ export function HealthDrawer({
                           <td className="px-2 py-2.5 text-right text-slate-700">{r.actual}</td>
                           <td className="px-2 py-2.5 text-right">
                             {isHeadcountUnset(r.headcount) ? (
-                              <span className="text-slate-400" title="未配置编制，无法判断空岗/超编">
+                              <span className="text-slate-500" title="未配置编制，无法判断空岗/超编">
                                 未配置
                               </span>
                             ) : r.gap === null ? (
-                              <span className="text-slate-400">—</span>
+                              <span className="text-slate-500">—</span>
                             ) : (
                               <span className={r.gap > 0 ? 'text-amber-600' : r.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
                                 {r.gap > 0 ? `+${r.gap} 空岗` : r.gap < 0 ? `${r.gap} 超编` : '满编'}
@@ -769,15 +771,15 @@ export function HealthDrawer({
                               <td className="px-2 py-1.5 text-right text-slate-600">{p.assignedCount}</td>
                               <td className="px-2 py-1.5 text-right">
                                 {p.gap === null ? (
-                                  <span className="text-slate-400 text-xs">—</span>
+                                  <span className="text-slate-500 text-xs">—</span>
                                 ) : (
                                   <span className={`text-xs ${p.gap > 0 ? 'text-amber-600' : p.gap < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                                     {p.gap > 0 ? `+${p.gap}` : p.gap < 0 ? p.gap : '满编'}
                                   </span>
                                 )}
                               </td>
-                              <td className="px-2 py-1.5 text-right text-slate-400 text-xs">{fmtCost(p.avgCost)}</td>
-                              <td className="px-2 py-1.5 text-right text-slate-400 text-xs">—</td>
+                              <td className="px-2 py-1.5 text-right text-slate-500 text-xs">{fmtCost(p.avgCost)}</td>
+                              <td className="px-2 py-1.5 text-right text-slate-500 text-xs">—</td>
                               <td className="px-2 py-1.5 text-right">
                                 <span className={`text-xs ${p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}`}>
                                   {fmtCost(p.gapCost)}
@@ -793,7 +795,7 @@ export function HealthDrawer({
                   <tr className="bg-slate-50/60">
                     <td className="px-4 py-2.5 font-semibold text-slate-700">合计</td>
                     <td className="px-2 py-2.5 text-right font-semibold text-slate-700">
-                      {report.totals.totalGap === null ? '未配置' : fmt(report.totals.totalDepartments > 0 ? report.totals.totalEmployees + report.totals.totalGap : null)}
+                      {report.totals.totalHeadcount === null ? '未配置' : fmt(report.totals.totalHeadcount)}
                     </td>
                     <td className="px-2 py-2.5 text-right font-semibold text-slate-700">{report.totals.totalEmployees}</td>
                     <td className="px-2 py-2.5 text-right font-semibold text-slate-700">

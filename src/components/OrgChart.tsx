@@ -3,7 +3,7 @@ import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSe
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
-import { employeeDeptMap } from '../utils/search';
+import { employeeDeptMap, expandedMembersForSearch } from '../utils/search';
 import { SearchHighlight, SearchHighlightContext } from './SearchContext';
 import { PositionSummary } from '../utils/analytics';
 import { MatchResult } from '../utils/match';
@@ -152,22 +152,21 @@ const CARD_LEADER_H = 38; // 负责人 px-3 py-2（8*2 + 内容 20 + border 1 + 
 const CARD_MEMBERS_PAD = 16; // 成员区 px-3 py-2（8*2）
 const CARD_MEMBERS_LABEL_H = 24; // 「成员 (N)」text-xs 16 + mb-2 8
 const CARD_EMPTY_LIST_H = 34; // 空态「拖拽员工到这里」py-2 16 + 文本 16 + 余量
-const CARD_COLLAPSED_LIST_H = 32; // 收起态「已收起 · 展开查看全部 N 人」单行（v2.0.11）
+const CARD_COLLAPSED_LIST_H = 28; // 收起态「已收起 · 展开查看全部 N 人」单行（v2.0.11）
 const CARD_EMP_ROW_H = 46; // employee-tag py-1 8 + 姓名行 18 + gap-0.5 2 + 职级行 18
 const CARD_EMP_GAP = 4; // space-y-1
 const CARD_HEIGHT_SAFETY = 4; // 吸收字体/行高渲染差异
-// —— v2.1.1 岗位区（PositionSection）高度常量：岗位区恒渲染（每卡「岗位 (N) [+新建]」+ 岗位行） ——
-const CARD_POS_HEADER_H = 26; // 「岗位 (N) [+ 新建]」头行
-const CARD_POS_EMPTY_H = 20; // 暂无岗位，点「新建」添加
-const CARD_POS_ROW_H = 66; // 单岗位行（名/编制/在岗 +/- 套岗（选员工）+建虚拟兼岗 两行）
+// —— v2.1.1 岗位区（PositionSection）高度常量：仅有岗位时渲染岗位区 ——
+const CARD_POS_HEADER_H = 22; // 「岗位 (N)」头行
+const CARD_POS_ROW_H = 40; // 单岗位行（名称、编制、在岗、缺口）
 const CARD_POS_GAP = 4; // space-y-1
-const CARD_POS_PAD = 16; // 岗位区 px-3 pb-2（上下）
+const CARD_POS_PAD = 9; // 岗位区 pb-2 + 边框
 
 /**
  * 估算某部门卡片的实际高度（100% 缩放基准）。
  * - 收起态（默认）：成员区只显示一行「已收起」摘要 → 卡高紧凑；
  * - 展开态：所有成员平铺（无滚动、无上限）；
- * - v2.1.1：额外计入「岗位区」高度（每卡恒渲染，含一个或多个岗位行），
+ * - v2.1.1：有岗位时额外计入「岗位区」高度，
  *   否则卡高被低估 → 子部门被排得过近、层级上下挤在一起（用户反馈 v2.1.1）。
  * 布局（层间步进）与引导线（父卡底缘）都必须用「每个节点自己的高度」。
  */
@@ -182,7 +181,7 @@ export function estimateCardHeight(dept: Department, membersExpanded: boolean = 
   const pn = dept.positions?.length ?? 0;
   const posH =
     pn === 0
-      ? CARD_POS_PAD + CARD_POS_HEADER_H + CARD_POS_EMPTY_H
+      ? 0
       : CARD_POS_PAD + CARD_POS_HEADER_H + pn * CARD_POS_ROW_H + (pn - 1) * CARD_POS_GAP;
   return (
     CARD_HEADER_H +
@@ -219,7 +218,8 @@ function computeConnectors(
         const lastCx = lastChild.x + cardWidth / 2;
 
         // 主干：父底 → 总线高度（垂直）
-        paths.push(`M ${parentCx} ${parentBottom} L ${parentCx} ${busY}`);
+        // 从父卡内部起线，由不透明卡片遮盖，避免估算高度的余量造成连线悬空。
+        paths.push(`M ${parentCx} ${n.y + CARD_HEADER_H / 2} L ${parentCx} ${busY}`);
         // 总线：从第一个子卡中线到最后一个子卡中线（水平）
         paths.push(`M ${firstCx} ${busY} L ${lastCx} ${busY}`);
         // 每个子卡：总线高度 → 子卡顶（垂直）
@@ -649,21 +649,21 @@ export function OrgChart({
     return () => window.removeEventListener('resize', updateWidth);
   }, [departments, zoom, canvasRef]);
   
-  // 首次加载数据后，滚动到树中心，让组织架构显示在视觉中央（而非左上角）
+  // 首次加载从组织树左上方开始，避免多根组织的首个部门被裁掉。
   const hadDataRef = useRef(false);
   useEffect(() => {
     if (departments.length === 0) { hadDataRef.current = false; return; }
     const firstLoad = !hadDataRef.current;
     hadDataRef.current = true;
     if (firstLoad) {
-      // 等布局渲染后滚动到中心（树中心 = canvas 宽度一半 * scale - 视口一半）
+      // 等布局渲染后定位阅读起点。
       requestAnimationFrame(() => {
         const el = zoomContainerRef.current;
         const canvas = canvasRef.current;
         if (el && canvas) {
-          const scale = zoom / 100;
-          const targetLeft = (canvas.offsetWidth * scale - el.clientWidth) / 2;
-          const targetTop = (canvas.offsetHeight * scale - el.clientHeight) / 2;
+          const targetLeft = 0;
+          // 首屏从根部门开始阅读，垂直居中会裁掉根节点。
+          const targetTop = 0;
           el.scrollLeft = Math.max(0, targetLeft);
           el.scrollTop = Math.max(0, targetTop);
         }
@@ -771,10 +771,11 @@ export function OrgChart({
   };
   
   // 布局按 100% 基准计算，缩放由外层 transform: scale 完成
+  const visibleMemberIds = expandedMembersForSearch(departments, memberExpandedIds, searchHighlight?.empIds ?? EMPTY_ID_SET);
   const scale = zoom / 100;
-  const treeNodes = calculateTreeLayout(departments, 0, 0, 100, memberExpandedIds);
+  const treeNodes = calculateTreeLayout(departments, 0, 0, 100, visibleMemberIds);
   // 方案 A：布局宽度/高度都由坐标树计算（与绝对定位坐标一致，而非累加根 width）
-  const layoutHeight = computeLayoutHeight(treeNodes, memberExpandedIds);
+  const layoutHeight = computeLayoutHeight(treeNodes, visibleMemberIds);
   // 遍历所有节点取 max(x + width)，确保 wrapper 包住最右的部门（含子部门）
   const layoutWidth = (() => {
     let maxRight = 0;
@@ -822,7 +823,7 @@ export function OrgChart({
           >
             {/* 引导线层：父→子连接线，绝对定位铺满画布，位于卡片下方（先渲染） */}
             {(() => {
-              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH, memberExpandedIds);
+              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH, visibleMemberIds);
               if (connectorPaths.length === 0) return null;
               return (
                 <svg
@@ -860,7 +861,7 @@ export function OrgChart({
               allEmployees,
               selectedSet,
               handleToggleSelectEmp,
-              memberExpandedIds,
+              visibleMemberIds,
               toggleMemberExpanded,
               positionSummaries,
               matchStates,

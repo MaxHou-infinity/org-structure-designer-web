@@ -103,7 +103,7 @@ describe('v2.2.0 组件交互冒烟', () => {
     render(<CompetencyRing status="warn" />);
     expect(screen.getByLabelText('胜任度：待提升')).toBeTruthy();
     render(<CompetencyRing status="danger" score={2} />);
-    expect(screen.getByLabelText('胜任度：不胜任')).toBeTruthy();
+    expect(screen.getByLabelText('胜任度：待复核')).toBeTruthy();
     render(<CompetencyRing status="unrated" />);
     expect(screen.getByLabelText('胜任度：未评分')).toBeTruthy();
   });

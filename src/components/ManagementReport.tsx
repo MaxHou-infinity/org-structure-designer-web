@@ -1,3 +1,5 @@
+import { useDialogFocus } from '../utils/useDialogFocus';
+import { exportCanvas } from '../utils/exportCanvas';
 import { useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Printer, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
 import { Scenario, LevelConfig } from '../types';
@@ -197,6 +199,8 @@ export function ManagementReport({
     [open],
   );
 
+  const dialogRef = useDialogFocus(open, onClose);
+
   if (!open) return null;
 
   const highlights = buildHighlights(diff);
@@ -210,13 +214,7 @@ export function ManagementReport({
   const handleExportPng = async () => {
     if (!reportRef.current) return;
     try {
-      const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(reportRef.current, {
-        backgroundColor: '#FFFFFF',
-        scale: 2,
-        logging: false,
-        useCORS: true,
-      });
+      const canvas = await exportCanvas(reportRef.current);
       const dataUrl = canvas.toDataURL('image/png');
       const base64 = dataUrl.split(',')[1];
       const binary = atob(base64);
@@ -248,7 +246,7 @@ export function ManagementReport({
   };
 
   return (
-    <div className="fixed inset-0 z-[95] bg-white/95 backdrop-blur-lg overflow-y-auto">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="管理层报告" tabIndex={-1} className="fixed inset-0 z-[95] bg-white/95 backdrop-blur-lg overflow-y-auto">
       {/* 顶部工具条（打印时隐藏） */}
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-100 px-6 py-3 flex items-center justify-between no-print">
         <div className="flex items-center gap-3">

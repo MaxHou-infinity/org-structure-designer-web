@@ -74,7 +74,14 @@ export function ScenarioSwitcher({
   };
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative shrink-0" ref={ref} onKeyDown={(event) => {
+      if (event.key === 'Escape' && open) {
+        event.stopPropagation();
+        setOpen(false);
+        setAction('idle');
+        ref.current?.querySelector('button')?.focus();
+      }
+    }}>
       <button
         onClick={() => {
           setOpen((v) => !v);
@@ -82,14 +89,15 @@ export function ScenarioSwitcher({
         }}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 border border-slate-200/60 hover:bg-white text-sm text-slate-700 transition-colors"
         title="切换场景"
+        aria-expanded={open}
       >
         <span className="text-slate-400">场景:</span>
-        <span className="font-semibold text-slate-800">{current?.name ?? '—'}</span>
+        <span className="font-semibold text-slate-800 truncate max-w-40">{current?.name ?? '—'}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-2 w-72 rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp">
+        <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-100 shadow-xl p-2 z-50 animate-fadeInUp">
           <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-400">场景</div>
           {scenarios.map((s) => (
             <div
@@ -124,7 +132,7 @@ export function ScenarioSwitcher({
                   <span className="flex-1 text-sm text-slate-700">{s.name}</span>
                   <span className="text-[10px] text-slate-300">{fmtTime(s.updatedAt)}</span>
                   {s.id === currentScenarioId && <Check className="w-4 h-4 text-indigo-500" />}
-                  <div className="hidden group-hover:flex items-center gap-1">
+                  <div className="flex items-center gap-1">
                     <button
                       onClick={(e) => startRename(e, s.id, s.name)}
                       className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"

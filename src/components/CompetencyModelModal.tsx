@@ -109,12 +109,6 @@ export function CompetencyModelModal({
   const footer = (
     <>
       <button
-        onClick={onClose}
-        className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-      >
-        取消
-      </button>
-      <button
         onClick={() => onSave(draft)}
         disabled={invalid}
         className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
@@ -156,7 +150,7 @@ export function CompetencyModelModal({
                     />
                     {d.enabled === false ? '已停用' : '启用'}
                   </label>
-                  <span className="text-[10px] text-slate-400 font-mono truncate" title="稳定 key（建后不可改，AI 语义/历史关联根基）">
+                  <span className="text-[10px] text-slate-500 font-mono truncate" title="稳定 key（建后不可改，AI 语义/历史关联根基）">
                     {d.key}
                   </span>
                   {d.builtin && (
@@ -175,7 +169,7 @@ export function CompetencyModelModal({
                       className="w-16 px-1.5 py-0.5 rounded border border-slate-200 text-right text-xs tabular-nums focus-ring"
                       title="权重（只影响总分排序，不影响木桶灯号）"
                     />
-                    <span className="text-[10px] text-slate-400">权重</span>
+                    <span className="text-[10px] text-slate-500">权重</span>
                     <input
                       type="number"
                       min={1}
@@ -187,14 +181,14 @@ export function CompetencyModelModal({
                       className="w-12 px-1.5 py-0.5 rounded border border-slate-200 text-right text-xs tabular-nums focus-ring"
                       title="展示顺序（组内升序）"
                     />
-                    <span className="text-[10px] text-slate-400">序</span>
+                    <span className="text-[10px] text-slate-500">序</span>
                     <button
                       type="button"
                       onClick={() => canDelete && removeDimension(d.key)}
                       disabled={!canDelete}
                       className={`p-1 rounded-md transition-colors ${
                         canDelete
-                          ? 'text-slate-400 hover:bg-red-50 hover:text-red-600'
+                          ? 'text-slate-500 hover:bg-red-50 hover:text-red-600'
                           : 'text-slate-200 cursor-not-allowed'
                       }`}
                       title={
@@ -237,6 +231,7 @@ export function CompetencyModelModal({
   return (
     <AppModal
       open={open}
+      dirty={JSON.stringify(draft) !== JSON.stringify(model) || Boolean(newLabel.trim() || newDefinition.trim())}
       onClose={onClose}
       title="胜任度维度配置"
       subtitle="维度 key 稳定不可改；改显示名只改 label；权重只影响总分排序、不影响木桶灯号。停用 = 软删（历史评估保留）。"
@@ -245,12 +240,12 @@ export function CompetencyModelModal({
     >
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-slate-500 flex items-center gap-1.5">
-          <Layers className="w-3.5 h-3.5 text-slate-400" />
+          <Layers className="w-3.5 h-3.5 text-slate-500" />
           当前模型（场景级）
         </span>
         <button
           onClick={restoreDefault}
-          className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-red-500 transition-colors"
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-red-500 transition-colors"
         >
           <RotateCcw className="w-3 h-3" />
           恢复默认预设
@@ -310,7 +305,7 @@ export function CompetencyModelModal({
         </div>
       </div>
 
-      <p className="mt-3 text-[10px] text-slate-400 leading-snug">
+      <p className="mt-3 text-[10px] text-slate-500 leading-snug">
         恢复默认预设 / 停用维度不会删除任何评估数据；被重置或停用的已评维度在「历史轨迹」中仍可见（orphan 降级呈现），
         只是不再计入当前灯号与总分。
       </p>

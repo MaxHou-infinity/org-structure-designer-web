@@ -1538,3 +1538,23 @@ describe('v2.1.1 空岗率口径一致（迁移后部门级数字不变）', () 
     expect(computeL3([migrated], COSTS)[0].headcount).toBe(computeL3([legacy], COSTS)[0].headcount);
   });
 });
+
+
+describe('报告体验一致性回归', () => {
+  it('父子成本只累计一次，未配置部门不能制造超编', () => {
+    const tree = [dept('a', 'A', 1, { headcount: 3, employees: [emp('a1', 'L1.1')], children: [dept('ac', 'A子部门', 2, { employees: [emp('a2', 'L2.1')] })] }), dept('b', '未配编制', 1, { employees: [emp('b1', 'L3.2')] })];
+    const report = computeHealthReport(tree, COSTS);
+    expect(report.totals.totalEmployees).toBe(3);
+    expect(report.totals.totalHeadcount).toBe(3);
+    expect(report.totals.totalGap).toBe(1);
+    expect(report.totals.totalCost).toBe(10);
+    expect(computeHealthReport(tree, COSTS, 'ac').totals.totalDepartments).toBe(1);
+  });
+  it('只有子部门配编制时，父部门的未覆盖员工不进入缺口', () => {
+    const root = dept('a', 'A', 1, { employees: [emp('a1', 'L1.1')], children: [dept('ac', 'A子部门', 2, { headcount: 2, employees: [emp('a2', 'L2.1')] })] });
+    const report = computeHealthReport([root], COSTS);
+    expect(report.totals.totalGap).toBe(1);
+    expect(report.l3[0].gap).toBe(1);
+    expect(report.l2.find((m) => m.key === 'vacancy')?.value).toBe(50);
+  });
+});

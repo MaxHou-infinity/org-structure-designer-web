@@ -157,6 +157,8 @@ export interface ReportTotals {
   totalDepartments: number;
   /** 编制缺口合计（正=空岗，负=超编）；当无任何部门配置编制时置为 null（未配置，不伪装成“超编/空岗”） */
   totalGap: number | null;
+  /** 已配置部门的编制合计，与缺口覆盖范围一致。 */
+  totalHeadcount: number | null;
   /** 月人力成本（实际成本合计） */
   totalCost: number;
   /** 有编制配置的一级部门数 */
@@ -411,26 +413,26 @@ export function deptHeadcount(dept: Department): number | null {
     : null;
 }
 
-/** 部门是否「已配置有效编制」（deptHeadcount !== null）。供空岗率分子/分母覆盖判定用。 */
-function hasEffectiveHeadcount(dept: Department): boolean {
-  return deptHeadcount(dept) !== null;
+/** 有效编制和它覆盖的人员必须同口径；父子同配时员工只计一次。 */
+export function headcountCoverage(roots: Department[]): { headcount: number | null; actual: number } {
+  let headcount = 0;
+  let found = false;
+  const employeeIds = new Set<string>();
+  const walk = (list: Department[], covered: boolean) => {
+    for (const dept of list) {
+      const hc = deptHeadcount(dept);
+      if (hc !== null) { headcount += hc; found = true; }
+      const inScope = covered || hc !== null;
+      if (inScope) for (const emp of dept.employees) if (!emp.isVirtual) employeeIds.add(emp.id);
+      walk(dept.children, inScope);
+    }
+  };
+  walk(roots, false);
+  return { headcount: found ? headcount : null, actual: employeeIds.size };
 }
 
-/** 子树编制合计（只累加「已配置有效编制」的部门；未配置视为无有效编制 → 返回 null）。
- *  统一经 deptHeadcount 读取，保证 v1→v2 迁移后数字不变。 */
 function sumHeadcountSubtree(dept: Department): number | null {
-  let sum = 0;
-  let found = false;
-  const walk = (d: Department) => {
-    const hc = deptHeadcount(d);
-    if (hc !== null) {
-      sum += hc;
-      found = true;
-    }
-    for (const c of d.children) walk(c);
-  };
-  walk(dept);
-  return found ? sum : null;
+  return headcountCoverage([dept]).headcount;
 }
 
 /** 获取某职级配置的月成本；未知职级返回 0 */
@@ -540,7 +542,7 @@ export function computeL1(depts: Department[], thresholds: HealthThresholds = ge
   return depts.map((d) => {
     const actual = countEmployees(d, false);
     const headcount = sumHeadcountSubtree(d);
-    const status = deptStatus(headcount, actual, thresholds);
+    const status = deptStatus(headcount, headcountCoverage([d]).actual, thresholds);
     return {
       deptId: d.id,
       name: d.name,
@@ -769,7 +771,6 @@ function managerRatioVerdictText(status: HealthStatus, b: ManagerBreakdown): str
  * @param roots 作用域根部门列表（聚焦单个 L1 时传入 [该部门]）
  */
 export function computeL2(roots: Department[], thresholds: HealthThresholds = getHealthThresholds()): L2Metric[] {
-  const allDepts = flattenDepartments(roots);
 
   // —— 管理幅度（v2.0.9：中位数主判 + 极值升级 + 直管口径修正）——
   const spanBreakdown = computeSpanBreakdown(roots);
@@ -822,24 +823,10 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
   // 编制统一经 deptHeadcount 读取（优先岗位聚合、回退部门冗余派生），保证 v1→v2 迁移后部门级数字不变。
   // 未配置编制的部门不进分子也不进分母，避免分母虚大压低空岗率。
   // 覆盖判定：某部门或其任一祖先已配置有效编制，则其子树整体计入“已配置”分母（父子同配不重复计）。
-  let headcount = 0;
-  let foundHeadcount = false;
-  for (const d of allDepts) {
-    const hc = deptHeadcount(d);
-    if (hc !== null) {
-      headcount += hc;
-      foundHeadcount = true;
-    }
-  }
-  let configuredActual = 0;
-  const walkConfigured = (list: Department[], covered: boolean) => {
-    for (const d of list) {
-      const inCovered = covered || hasEffectiveHeadcount(d);
-      if (inCovered) configuredActual += d.employees.filter((e) => !e.isVirtual).length;
-      walkConfigured(d.children, inCovered);
-    }
-  };
-  walkConfigured(roots, false);
+  const coverage = headcountCoverage(roots);
+  const headcount = coverage.headcount ?? 0;
+  const configuredActual = coverage.actual;
+  const foundHeadcount = coverage.headcount !== null;
   let vacancy: number | null = null;
   let vacancyStatusVal: HealthStatus = 'warn';
   let vacancyVerdict = '未配置编制数据，无法计算空岗率';
@@ -950,9 +937,9 @@ export function computeL3(roots: Department[], configs: LevelConfig[], threshold
     const headcount = sumHeadcountSubtree(d);
     const avgCost = avgCostSubtree(d, configs);
     const actualCost = round1(sumCostSubtree(d, configs));
-    const gap = headcount === null ? null : headcount - actual;
+    const gap = headcount === null ? null : headcount - headcountCoverage([d]).actual;
     const gapCost = gap === null || avgCost <= 0 ? 0 : round1(gap * avgCost);
-    const status = deptStatus(headcount, actual, thresholds);
+    const status = deptStatus(headcount, headcountCoverage([d]).actual, thresholds);
     return {
       deptId: d.id,
       name: d.name,
@@ -1093,24 +1080,19 @@ export function computeHealthReport(
   const summaryAgg = summarizeDiagnosis(l2);
   const l3 = computeL3(scope, configs, thresholds);
 
-  // 汇总（L1 树口径，避免子部门重复累计）
-  let totalEmployees = 0;
-  let configuredHeadcount = 0;
-  let totalHeadcount = 0;
-  for (const row of l1) {
-    totalEmployees += row.actual;
-    if (row.headcount !== null) {
-      configuredHeadcount++;
-      totalHeadcount += row.headcount;
-    }
-  }
-  const totalGap = configuredHeadcount === 0 ? null : totalHeadcount - totalEmployees;
-  const totalCost = round1(l3.reduce((s, r) => s + r.actualCost, 0));
+  // 汇总从原始人员去重计算，不能相加包含子树的展示行。
+  const employees = new Map(flattenDepartments(scope).flatMap((d) => d.employees).filter((e) => !e.isVirtual).map((e) => [e.id, e]));
+  const totalEmployees = employees.size;
+  const configuredHeadcount = l1.filter((row) => row.headcount !== null).length;
+  const coverage = headcountCoverage(scope);
+  const totalGap = coverage.headcount === null ? null : coverage.headcount - coverage.actual;
+  const totalCost = round1([...employees.values()].reduce((sum, emp) => sum + employeeCost(emp, configs), 0));
 
   const totals: ReportTotals = {
     totalEmployees,
-    totalDepartments: flattenDepartments(depts).length,
+    totalDepartments: flattenDepartments(scope).length,
     totalGap,
+    totalHeadcount: coverage.headcount,
     totalCost,
     configuredHeadcount,
   };

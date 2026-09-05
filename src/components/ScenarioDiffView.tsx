@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../utils/useDialogFocus';
 import { useMemo, useState } from 'react';
 import { X, GitCompare, Download, Building2, Users } from 'lucide-react';
 import { Scenario } from '../types';
@@ -327,6 +328,8 @@ export function ScenarioDiffView({
   const bL2 = useMemo(() => computeL2(baseline.departments), [baseline]);
   const tL2 = useMemo(() => computeL2(target.departments), [target]);
 
+  const dialogRef = useDialogFocus(open, onClose);
+
   if (!open) return null;
 
   const overallBase = diff.overall.baseline;
@@ -361,7 +364,7 @@ export function ScenarioDiffView({
   return (
     <div className="fixed inset-0 z-[85]">
       <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px]" onClick={onClose} />
-      <aside className="absolute inset-y-0 right-0 w-[900px] max-w-[96vw] glass border-l border-white/40 shadow-2xl flex flex-col animate-slideInRight">
+      <aside ref={dialogRef} role="dialog" aria-modal="true" aria-label="场景差异比较" tabIndex={-1} className="absolute inset-y-0 right-0 w-[900px] max-w-[96vw] glass border-l border-white/40 shadow-2xl flex flex-col animate-slideInRight">
         {/* 头部 */}
         <div className="px-5 py-4 border-b border-slate-100">
           <div className="flex items-center justify-between">

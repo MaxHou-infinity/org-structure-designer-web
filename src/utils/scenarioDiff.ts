@@ -1,6 +1,7 @@
 import { Department, Employee, LevelConfig, Scenario } from '../types';
 import {
   computeL1,
+  headcountCoverage,
   computeL2,
   computeL3,
   flattenDepartments,
@@ -459,6 +460,7 @@ export function computeScenarioTotals(s: Scenario, thresholds?: HealthThresholds
   const l1 = computeL1(s.departments, thresholds);
   const l3 = computeL3(s.departments, s.levelConfigs, thresholds);
   const l1ById = new Set(l1.map((r) => r.deptId));
+  const coverage = headcountCoverage(s.departments);
 
   let totalHeadcount = 0;
   let configured = 0;
@@ -488,7 +490,7 @@ export function computeScenarioTotals(s: Scenario, thresholds?: HealthThresholds
   return {
     totalHeadcount: configured === 0 ? null : totalHeadcount,
     totalEmployees,
-    totalGap: configured === 0 ? null : round1(totalHeadcount - totalEmployees),
+    totalGap: coverage.headcount === null ? null : round1(coverage.headcount - coverage.actual),
     totalCost: round1(totalCost),
     totalGapCost: round1(totalGapCost),
   };

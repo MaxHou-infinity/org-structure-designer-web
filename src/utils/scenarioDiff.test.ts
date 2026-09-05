@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeL2, DEFAULT_HEALTH_THRESHOLDS, HealthThresholds, L2Metric } from './analytics';
+import { computeHealthReport, computeL2, DEFAULT_HEALTH_THRESHOLDS, HealthThresholds, L2Metric } from './analytics';
 import { Department, Employee, LevelConfig, Scenario } from '../types';
 import {
   computeScenarioDiff,
@@ -46,6 +46,19 @@ function scenario(id: string, departments: Department[], allEmployeesFlat: Emplo
 
 /** 职级成本配置：L1 = 4w/月 */
 const COST_CONFIGS: LevelConfig[] = [{ code: 'L', number: '1', label: '一级', color: '#000000', cost: 4 }];
+
+it('场景对比与诊断报告对部分编制和多层成本采用一致汇总', () => {
+  const employees = [emp('a'), emp('b'), emp('c')];
+  const tree = [dept('root', '根部门', 1, {
+    employees: [employees[0]], children: [dept('child', '已配编制', 2, { headcount: 2, employees: [employees[1]] })],
+  }), dept('other', '未配编制', 1, { employees: [employees[2]] })];
+  const totals = computeScenarioTotals(scenario('baseline', tree, employees, COST_CONFIGS));
+  const report = computeHealthReport(tree, COST_CONFIGS);
+  expect(totals.totalGap).toBe(1);
+  expect(totals.totalGap).toBe(report.totals.totalGap);
+  expect(totals.totalCost).toBe(12);
+  expect(totals.totalCost).toBe(report.totals.totalCost);
+});
 
 /** 手造 L2 指标（只测 computeMetricDiffs 的差异逻辑，不依赖引擎语义） */
 function metric(key: L2Metric['key'], value: number | null, status: 'healthy' | 'warn' | 'danger'): L2Metric {

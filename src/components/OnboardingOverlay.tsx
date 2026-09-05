@@ -40,7 +40,7 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
     <div className="fixed inset-0 z-[130] flex items-center justify-center p-6">
       <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-[560px] max-w-[92vw] rounded-3xl glass shadow-2xl overflow-hidden animate-fadeInUp">
-        <div className="bg-gradient-to-br from-indigo-500 via-indigo-600 to-purple-600 p-7 text-white relative">
+        <div className="bg-indigo-700 p-7 text-white relative">
           <button
             onClick={onClose}
             className="absolute top-4 right-4 p-1.5 rounded-lg text-white/70 hover:bg-white/15 hover:text-white transition-colors"
@@ -85,7 +85,7 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
               下载模板
             </button>
             <button
-              onClick={() => onLoadTemplate('internet')}
+              onClick={() => { onLoadTemplate('internet'); onClose(); }}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 hover:shadow-sm transition-all"
             >
               <Sparkles className="w-4 h-4" />

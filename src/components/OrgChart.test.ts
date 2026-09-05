@@ -77,12 +77,13 @@ describe('calculateTreeLayout（方案A 绝对定位布局）', () => {
       headcount: undefined,
     };
 
-    // 收起态（默认）：紧凑卡高，子部门 = 父y + 估算高 + 40（v2.1.1 含岗位区，空岗位也 > 200）
+    // 空岗位区不渲染，收起态应保持紧凑，不能留下已删除控件的高度。
     const collapsedH = estimateCardHeight(parent, false);
     const nodesCollapsed = calculateTreeLayout([parent], 0, 0, 100, new Set());
     const pCollapsed = nodesCollapsed[0];
     expect(pCollapsed.children[0].y).toBe(pCollapsed.y + collapsedH + 40);
-    expect(collapsedH).toBeGreaterThan(200); // 岗位区恒渲染，收起态也高于旧固定 200（避免子部门被挤占）
+    expect(collapsedH).toBeGreaterThan(150);
+    expect(collapsedH).toBeLessThan(180);
 
     // 展开态：全部成员平铺（无滚动上限），卡高随成员+岗位区增长（正是旧版漏掉的“高卡”情形）
     const expandedH = estimateCardHeight(parent, true);
@@ -106,7 +107,7 @@ describe('calculateTreeLayout（方案A 绝对定位布局）', () => {
     const collapsedY = calculateTreeLayout([parent], 0, 0, 100, new Set())[0].children[0].y;
     const expandedY = calculateTreeLayout([parent], 0, 0, 100, new Set(['p']))[0].children[0].y;
     expect(expandedY).toBeGreaterThan(collapsedY); // 展开时子部门下移
-    expect(expandedY - collapsedY).toBe(5 * 46 + 4 * 4 - 32); // 差值 = 全行数高 − 收起单行高
+    expect(expandedY - collapsedY).toBe(5 * 46 + 4 * 4 - 28); // 差值 = 全行数高 − 收起单行高
   });
 
   it('空部门（0 成员）子部门间距 = 估算高度 + 40（最小卡高不挤压子卡）', () => {

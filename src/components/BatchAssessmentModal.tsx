@@ -113,6 +113,7 @@ export function BatchAssessmentModal({
   const [scores, setScores] = useState<Record<string, Record<string, number | ''>>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [selectedRows, setSelectedRows] = useState<Set<string>>(() => new Set());
+  const [batchValue, setBatchValue] = useState(3);
   const [fileInputKey, setFileInputKey] = useState(0);
   const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -147,8 +148,16 @@ export function BatchAssessmentModal({
   const scopeEmployees = useMemo(() => {
     let emps: Employee[] = allEmployees.filter((e) => !e.isVirtual);
     if (deptId) {
-      const dept = departments.find((d) => d.id === deptId);
-      emps = dept ? collectDeptEmployees(dept, includeChildren) : emps;
+      const findDept = (list: Department[]): Department | undefined => {
+        for (const dept of list) {
+          if (dept.id === deptId) return dept;
+          const child = findDept(dept.children);
+          if (child) return child;
+        }
+      };
+      const dept = findDept(departments);
+      emps = dept ? collectDeptEmployees(dept, includeChildren).filter((e) => !e.isVirtual) : [];
+      emps = [...new Map(emps.map((e) => [e.id, e])).values()];
     }
     emps = emps.filter((e) =>
       assessType === 'leadership'
@@ -157,10 +166,7 @@ export function BatchAssessmentModal({
     );
     if (onlyUnrated) {
       emps = emps.filter((e) => {
-        for (const d of dims) {
-          if (latestSupervisorAssessment(assessments, e.id, d.key)) return false;
-        }
-        return true;
+        return dims.some((d) => !latestSupervisorAssessment(assessments, e.id, d.key));
       });
     }
     return emps.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
@@ -172,6 +178,7 @@ export function BatchAssessmentModal({
       setScores({});
       setNotes({});
       setSelectedRows(new Set());
+      setAssessType('leadership');
       setHrbp('');
       setLeader('');
       setDeptId('');
@@ -202,7 +209,7 @@ export function BatchAssessmentModal({
       const filled: { dim: string; score: number; requirement: number }[] = [];
       for (const d of dims) {
         const v = row[d.key];
-        if (typeof v === 'number' && v >= 1 && v <= 5) {
+        if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 5) {
           filled.push({ dim: d.key, score: v, requirement: empRequirement(emp) });
         }
       }
@@ -263,13 +270,6 @@ export function BatchAssessmentModal({
   const applyBatch = useCallback(
     (dimKey: string, value: number) => {
       if (selectedRows.size === 0) return;
-      if (
-        !window.confirm(
-          `将把「${dims.find((d) => d.key === dimKey)?.label ?? dimKey}」= ${value} 套用到选中的 ${selectedRows.size} 行，继续？`,
-        )
-      ) {
-        return;
-      }
       setScores((prev) => {
         const next: Record<string, Record<string, number | ''>> = {};
         for (const empId of selectedRows) {
@@ -278,13 +278,19 @@ export function BatchAssessmentModal({
         return { ...prev, ...next };
       });
     },
-    [selectedRows, dims],
+    [selectedRows],
   );
 
   /** 键盘流：数字键 1-5 录入、Enter/↓ 下移一行同列 */
   const handleCellKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>, emp: Employee, dimIdx: number) => {
-      if (e.key >= '1' && e.key <= '5') return; // 原生输入数字
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key >= '1' && e.key <= '5') {
+        e.preventDefault();
+        setScore(emp.id, dims[dimIdx].key, Number(e.key));
+        return;
+      }
+      if (['0', '.', '-', '+', 'e', 'E'].includes(e.key)) e.preventDefault();
       if (e.key === 'Enter' || e.key === 'ArrowDown') {
         e.preventDefault();
         const idx = scopeEmployees.findIndex((x) => x.id === emp.id);
@@ -294,18 +300,25 @@ export function BatchAssessmentModal({
         }
       }
     },
-    [scopeEmployees, dims],
+    [scopeEmployees, dims, setScore],
   );
+
+  const activeDims = useMemo(() => competencyModel.dimensions.filter((d) => d.enabled !== false), [competencyModel]);
+  const pendingEmployees = useMemo(() => allEmployees.filter((e) => !e.isVirtual && activeDims.some((d) => {
+    const value = scores[e.id]?.[d.key];
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5;
+  })), [allEmployees, activeDims, scores]);
+  const pendingCells = pendingEmployees.reduce((total, emp) => total + activeDims.filter((d) => typeof scores[emp.id]?.[d.key] === 'number').length, 0);
 
   /** 保存：只落「已评分」格（部分未评允许）；每条快照 requirement */
   const handleSave = useCallback(() => {
     const rows: NewAssessment[] = [];
-    for (const emp of scopeEmployees) {
+    for (const emp of pendingEmployees) {
       const row = scores[emp.id] ?? {};
       const note = (notes[emp.id] ?? '').trim() || undefined;
-      for (const d of dims) {
+      for (const d of activeDims) {
         const v = row[d.key];
-        if (typeof v !== 'number' || v < 1 || v > 5) continue;
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 5) continue;
         rows.push({
           employeeId: emp.id,
           positionId: emp.positionId,
@@ -323,7 +336,7 @@ export function BatchAssessmentModal({
     if (rows.length === 0) return;
     onSave(rows);
     onClose();
-  }, [scopeEmployees, scores, notes, dims, empRequirement, leader, hrbp, assessDate, onSave, onClose]);
+  }, [pendingEmployees, scores, notes, activeDims, empRequirement, leader, hrbp, assessDate, onSave, onClose]);
 
   const ratedCount = useMemo(() => {
     let n = 0;
@@ -339,30 +352,25 @@ export function BatchAssessmentModal({
 
   const footer = (
     <>
-      <div className="mr-auto flex items-center gap-3 text-xs">
+      <div className="mr-auto flex flex-wrap items-center gap-3 text-xs">
+        <span className="text-slate-700">本批 {pendingEmployees.length} 人 · {pendingCells} 格（含筛选外已填）</span>
         <span className="text-emerald-600">已评 {ratedCount} 人</span>
-        <span className={unratedCount > 0 ? 'text-amber-600 font-medium' : 'text-slate-400'}>
+        <span className={unratedCount > 0 ? 'text-amber-600 font-medium' : 'text-slate-500'}>
           {unratedCount > 0 ? (
             <span className="inline-flex items-center gap-1">
               <AlertTriangle className="w-3.5 h-3.5" />
               还有 {unratedCount} 人未评（可只保存已评）
             </span>
           ) : (
-            '全员已评'
+            scopeEmployees.length === 0 ? '当前范围没有可评估人员' : '空白维度仍为未评'
           )}
         </span>
       </div>
       <button
-        onClick={onClose}
-        className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-      >
-        取消
-      </button>
-      <button
         onClick={handleSave}
-        disabled={!hrbp.trim() || ratedCount === 0}
+        disabled={!hrbp.trim() || pendingEmployees.length === 0}
         className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-        title={!hrbp.trim() ? '请填写牵头 HRBP' : ratedCount === 0 ? '请至少评一个分数格' : '保存本批已评分数'}
+        title={!hrbp.trim() ? '请填写牵头 HRBP' : pendingEmployees.length === 0 ? '请至少评一个分数格' : '保存本批已评分数'}
       >
         保存批次
       </button>
@@ -372,14 +380,15 @@ export function BatchAssessmentModal({
   return (
     <AppModal
       open={open}
+      dirty={Object.values(scores).some((row) => Object.values(row).some((v) => typeof v === 'number')) || Object.values(notes).some((v) => v.trim())}
       onClose={onClose}
       title="批量评估 · 胜任度评分"
-      subtitle="分数为 1–5 整数（BARS 行为锚点）；灯号/总分/Gap 由系统实时计算，不落盘为手填值。未评 = 中性灰，不预填。"
-      maxWidth="max-w-4xl"
+      subtitle="填写 1–5 分；空白表示未评。数字键直接改分，Enter / ↓ 移到下一人，Tab 切换维度。"
+      maxWidth="max-w-6xl"
       footer={footer}
     >
       {/* 批次头 */}
-      <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 space-y-3">
+      <div className="rounded-xl bg-white border border-slate-200 p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">评估类型</span>
@@ -389,7 +398,7 @@ export function BatchAssessmentModal({
                   key={t}
                   onClick={() => {
                     setAssessType(t);
-                    setScores({});
+                    setSelectedRows(new Set());
                   }}
                   aria-pressed={assessType === t}
                   className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
@@ -438,7 +447,7 @@ export function BatchAssessmentModal({
             <span className="text-xs text-slate-500">部门</span>
             <select
               value={deptId}
-              onChange={(e) => setDeptId(e.target.value)}
+              onChange={(e) => { setDeptId(e.target.value); setSelectedRows(new Set()); }}
               className="px-2 py-1 rounded-lg border border-slate-200 text-sm bg-white focus-ring"
             >
               <option value="">全公司</option>
@@ -455,7 +464,7 @@ export function BatchAssessmentModal({
             <input
               type="checkbox"
               checked={includeChildren}
-              onChange={(e) => setIncludeChildren(e.target.checked)}
+              onChange={(e) => { setIncludeChildren(e.target.checked); setSelectedRows(new Set()); }}
               className="accent-indigo-500"
             />
             含下级部门
@@ -464,12 +473,12 @@ export function BatchAssessmentModal({
             <input
               type="checkbox"
               checked={onlyUnrated}
-              onChange={(e) => setOnlyUnrated(e.target.checked)}
+              onChange={(e) => { setOnlyUnrated(e.target.checked); setSelectedRows(new Set()); }}
               className="accent-indigo-500"
             />
             只看未评
           </label>
-          <span className="text-[11px] text-slate-400 ml-auto">
+          <span className="text-[11px] text-slate-500 ml-auto">
             本次将评估 {scopeEmployees.length} 名{assessType === 'leadership' ? '管理者' : '员工'}
           </span>
         </div>
@@ -477,15 +486,16 @@ export function BatchAssessmentModal({
 
       {/* 批量操作 */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-slate-500">批量操作</span>
+        <label className="flex items-center gap-2 text-xs text-slate-600">批量分值
+          <select aria-label="批量分值" value={batchValue} onChange={(e) => setBatchValue(Number(e.target.value))} className="rounded-lg border border-slate-300 bg-white px-2 py-1">
+            {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} 分</option>)}
+          </select>
+        </label>
+        <span className="text-xs text-slate-500">已选 {selectedRows.size} 人</span>
         {dims.map((d) => (
           <span key={d.key} className="inline-flex items-center gap-1">
             <button
-              onClick={() => {
-                const v = window.prompt(`对「${d.label}」套用分值（1-5）到选中的 ${selectedRows.size} 行`, '3');
-                const n = Number(v);
-                if (v !== null && n >= 1 && n <= 5) applyBatch(d.key, n);
-              }}
+              onClick={() => applyBatch(d.key, batchValue)}
               disabled={selectedRows.size === 0}
               className="px-2 py-1 rounded-lg text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title={`勾选行后：对「${d.label}」批量套用同一分值`}
@@ -537,28 +547,28 @@ export function BatchAssessmentModal({
             }}
           />
         </label>
-        <span className="text-[10px] text-slate-400">
+        <span className="text-[10px] text-slate-500">
           <FileSpreadsheet className="w-3 h-3 inline mr-0.5" />
-          冲突/未知员工/越界报错不静默
+          导入前会校验工号和分值
         </span>
       </div>
 
       {/* 网格 */}
-      <div className="mt-3 overflow-x-auto rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card max-h-[46vh]">
+      <div className="mt-3 overflow-x-auto rounded-xl bg-white border border-slate-200 max-h-[46vh]">
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white/90 backdrop-blur">
-            <tr className="text-xs text-slate-400 uppercase tracking-wide border-b border-slate-100">
+            <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
               <th className="w-8 px-2 py-2" />
               <th className="text-left px-3 py-2 font-medium min-w-[110px]">姓名/工号</th>
               <th className="text-left px-2 py-2 font-medium min-w-[90px]">部门</th>
               <th className="text-left px-2 py-2 font-medium min-w-[90px]">岗位</th>
               {dims.map((d) => (
                 <th key={d.key} className="text-center px-2 py-2 font-medium min-w-[72px]">
-                  <span className="block text-[11px] text-slate-400">{d.label}</span>
-                  <span className="block text-[10px] text-slate-300">1–5</span>
+                  <span className="block text-[11px] text-slate-500">{d.label}</span>
+                  <span className="block text-[10px] text-slate-500">1–5</span>
                 </th>
               ))}
-              <th className="text-center px-2 py-2 font-medium min-w-[90px]">灯/总分/Gap</th>
+              <th className="text-center px-2 py-2 font-medium min-w-[90px]">灯 / 总分 / 最大差距</th>
               <th className="text-left px-2 py-2 font-medium min-w-[120px]">备注</th>
             </tr>
           </thead>
@@ -591,7 +601,7 @@ export function BatchAssessmentModal({
                   </td>
                   <td className="px-3 py-1.5">
                     <div className="text-xs font-medium text-slate-700 truncate">{emp.name}</div>
-                    <div className="text-[10px] text-slate-400">{emp.employeeId}</div>
+                    <div className="text-[10px] text-slate-500">{emp.employeeId}</div>
                   </td>
                   <td className="px-2 py-1.5 text-[11px] text-slate-500 truncate">{deptName}</td>
                   <td className="px-2 py-1.5 text-[11px] text-slate-500 truncate max-w-[110px]">
@@ -613,7 +623,9 @@ export function BatchAssessmentModal({
                           type="number"
                           min={1}
                           max={5}
-                          value={v === '' ? '' : (v as number)}
+                          value={v ?? ''}
+                          aria-label={`${emp.name} · ${d.label}`}
+                          step={1}
                           onChange={(e) => {
                             const raw = e.target.value;
                             if (raw === '') {
@@ -621,7 +633,7 @@ export function BatchAssessmentModal({
                               return;
                             }
                             const n = Number(raw);
-                            if (Number.isFinite(n) && n >= 0 && n <= 5) setScore(emp.id, d.key, n);
+                            if (Number.isInteger(n) && n >= 1 && n <= 5) setScore(emp.id, d.key, n);
                           }}
                           onKeyDown={(e) => handleCellKeyDown(e, emp, di)}
                           placeholder="·"
@@ -645,14 +657,14 @@ export function BatchAssessmentModal({
                   })}
                   <td className="px-2 py-1.5 text-center">
                     {derived.status === 'unrated' ? (
-                      <span className="text-[10px] text-slate-400">未评</span>
+                      <span className="text-[10px] text-slate-500">未评</span>
                     ) : (
                       <span
                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-semibold ${COMPETENCY_STYLE[derived.status].ring} ${COMPETENCY_STYLE[derived.status].text}`}
                         title={`总分 ${fmt(derived.total)} · 最差 Gap ${derived.worstGap} · 加权要求 ${fmt(derived.total != null && derived.gapSum != null ? derived.total + derived.gapSum : null)}`}
                       >
                         {COMPETENCY_STYLE[derived.status].glyph} {fmt(derived.total)} ·{' '}
-                        {derived.gapSum != null && derived.gapSum > 0 ? `Gap +${fmt(derived.gapSum)}` : `Gap ${fmt(derived.gapSum)}`}
+                        {derived.worstGap != null && derived.worstGap > 0 ? `差距 +${derived.worstGap}` : `差距 ${derived.worstGap}`}
                       </span>
                     )}
                   </td>
@@ -670,7 +682,7 @@ export function BatchAssessmentModal({
             })}
             {scopeEmployees.length === 0 && (
               <tr>
-                <td colSpan={6 + dims.length} className="py-8 text-center text-sm text-slate-400">
+                <td colSpan={6 + dims.length} className="py-8 text-center text-sm text-slate-500">
                   当前范围内暂无{assessType === 'leadership' ? '管理者' : '员工'}
                   {onlyUnrated ? '（且全部已评）' : ''}
                 </td>
@@ -679,8 +691,8 @@ export function BatchAssessmentModal({
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-[10px] text-slate-400 leading-snug">
-        保存后每条评估将快照「当时基准」（岗位带宽 B2 &gt; 职级 B1 &gt; 缺省 3）与评分人/时间（可追溯）；
+      <p className="mt-2 text-[10px] text-slate-500 leading-snug">
+        保存后保留本次评分、当时的要求分、评分人和日期，供后续复核；
         本工具只呈现依据，不自动定级 / 晋升 / 淘汰。
       </p>
     </AppModal>

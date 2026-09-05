@@ -106,7 +106,7 @@ function PositionSection({
                         const v = e.target.value === '' ? 0 : Number(e.target.value);
                         onSetPositionHeadcount?.(dept.id, pos.id, Number.isFinite(v) ? v : 0);
                       }}
-                      title="岗位编制（改后回车生效）"
+                      title="岗位编制（即时保存）"
                       className="w-11 px-1 py-0.5 rounded border border-slate-200 text-right text-xs focus-ring"
                     />
                     <span className="text-[10px] text-slate-400">/ 在岗 {assignedCount}</span>
